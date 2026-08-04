@@ -2,7 +2,9 @@
 FROM node:22-alpine AS builder
 
 # 接收构建参数
-ARG VITE_API_URL
+# 默认 /prod-api：与 .env.production、nginx.conf 的 /prod-api/ 代理保持一致，
+# 避免空环境变量覆盖 .env.production 导致前端打到裸路径
+ARG VITE_API_URL=/prod-api
 ARG VITE_APP_ENV=production
 
 # 设置环境变量
@@ -12,11 +14,11 @@ ENV VITE_APP_ENV=${VITE_APP_ENV}
 # 设置工作目录
 WORKDIR /app
 
-# 复制 package 文件
-COPY package.json pnpm-lock.yaml ./
+# 复制 package 文件和 pnpm 构建脚本许可配置
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
 # 安装 pnpm 并安装依赖
-RUN npm install -g pnpm && \
+RUN npm install -g pnpm@11.15.1 && \
     pnpm install --frozen-lockfile
 
 # 复制源代码

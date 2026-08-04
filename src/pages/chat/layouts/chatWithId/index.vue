@@ -13,6 +13,7 @@ import { send } from '@/api';
 import ChatSender from '@/components/ChatSender/index.vue';
 import { useAgentStore } from '@/stores/modules/agent';
 import { useChatStore } from '@/stores/modules/chat';
+import { useDesignStore } from '@/stores/modules/design';
 import { useModelStore } from '@/stores/modules/model';
 import { useUserStore } from '@/stores/modules/user';
 import { codeXRender } from '@/utils/markdownRenderers';
@@ -40,6 +41,10 @@ const chatStore = useChatStore();
 const modelStore = useModelStore();
 const agentStore = useAgentStore();
 const userStore = useUserStore();
+const designStore = useDesignStore();
+
+// Markdown 主题跟随应用主题，避免浅色主题下渲染出深色表格底色
+const markdownThemeMode = computed(() => (designStore.darkMode === 'dark' ? 'dark' : 'light'));
 
 // 用户头像
 const avatar = computed(() => {
@@ -389,6 +394,13 @@ function handleDataChunk(chunk: AnyObject | string): boolean {
 
       if (eventType === 'done' || dataObj?.done === true) {
         console.log('[SSE] 流结束');
+        return true;
+      }
+
+      // 后端业务异常以 SSE error 事件发送；此前这里未处理，导致页面只留下一个空白助手气泡。
+      if (eventType === 'error' || dataObj?.event === 'error') {
+        const error = dataObj?.error || dataObj?.message || '请求处理失败，请稍后重试';
+        handleContentChunk(`请求未能完成：${error}`);
         return true;
       }
 
@@ -830,7 +842,7 @@ function sendMessageByKey(key: number) {
             :code-x-render="codeXRender"
             class="markdown-body"
             :themes="{ light: 'github-light', dark: 'github-dark' }"
-            default-theme-mode="dark"
+            :default-theme-mode="markdownThemeMode"
           />
           <div v-if="item.content && item.role === 'user'" class="userContent">
             <div class="user-bubble" :class="{ editing: editingMessageKeys.includes(item.key) }">
@@ -971,7 +983,7 @@ function sendMessageByKey(key: number) {
   flex-direction: column;
   align-items: center;
   width: 100%;
-  max-width: 800px;
+  max-width: 1200px;
   height: 100%;
 
   .chat-warp {

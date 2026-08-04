@@ -43,7 +43,7 @@ async function handleSubmit(content: string) {
   flex-direction: column;
   align-items: center;
   width: 100%;
-  max-width: 800px;
+  max-width: 1200px;
   min-height: 450px;
 }
 </style>
