@@ -4,7 +4,7 @@ import type { AnyObject } from 'typescript-api-pro';
 import type { BubbleProps } from 'vue-element-plus-x/types/Bubble';
 import type { BubbleListInstance } from 'vue-element-plus-x/types/BubbleList';
 import type { ThinkingStatus } from 'vue-element-plus-x/types/Thinking';
-import type { ToolCallInfo, WfNodeEvent } from './types';
+import type { ChatSyncEvent, ToolCallInfo, VoiceStatus, WfNodeEvent } from './types';
 import type { SendDTO, WfNodeInput, WfNodeInputDef } from '@/api/chat/types';
 import { useHookFetch } from 'hook-fetch/vue';
 import { nextTick } from 'vue';
@@ -34,6 +34,12 @@ type MessageItem = BubbleProps & {
   feedbackTip?: string;
   /** 人机交互输入框临时内容 */
   feedbackValue?: string;
+  /** 语音同步消息所属请求，用于把增量、工具进度和结束事件归到同一回复 */
+  requestId?: string;
+  /** 消息来源。VOICE 仍复用现有用户/助手气泡渲染。 */
+  source?: string;
+  /** 该回复关联的工具执行进度 */
+  toolCallEvents?: ToolCallInfo[];
 };
 
 const route = useRoute();
@@ -56,6 +62,21 @@ const inputValue = ref('');
 const chatSenderRef = ref<InstanceType<typeof ChatSender> | null>(null);
 const bubbleItems = ref<MessageItem[]>([]);
 const bubbleListRef = ref<BubbleListInstance | null>(null);
+
+const voiceStatus = ref<VoiceStatus>('IDLE');
+const voiceStatusText: Record<VoiceStatus, string> = {
+  IDLE: '等待唤醒',
+  LISTENING: '正在聆听',
+  RECOGNIZING: '正在识别',
+  THINKING: '正在分析',
+  SPEAKING: '正在播报',
+};
+
+let chatSyncSocket: WebSocket | null = null;
+let chatSyncReconnectTimer: number | undefined;
+let chatSyncReconnectAttempts = 0;
+let shouldKeepChatSyncConnected = false;
+const receivedSyncEventIds = new Set<string>();
 
 // 独立的工具调用事件列表
 const toolCallEvents = ref<ToolCallInfo[]>([]);
@@ -101,6 +122,28 @@ onMounted(() => {
   bubbleItems.value.forEach((item) => {
     copyIconMap.value[item.key] = 'CopyDocument';
   });
+});
+
+const currentSessionId = computed(() => {
+  const id = route.params?.id;
+  return id && id !== 'not_login' ? String(id) : undefined;
+});
+
+watch(
+  [currentSessionId, () => userStore.token],
+  ([sessionId, token]) => {
+    disconnectChatSync();
+    receivedSyncEventIds.clear();
+    voiceStatus.value = 'IDLE';
+    if (sessionId && token) {
+      connectChatSync(sessionId, token);
+    }
+  },
+  { immediate: true },
+);
+
+onBeforeUnmount(() => {
+  disconnectChatSync();
 });
 
 // 记录进入思考中
@@ -158,6 +201,247 @@ watch(
 // 封装错误处理逻辑
 function handleError(err: any) {
   console.error('Fetch error:', err);
+}
+
+/**
+ * 浏览器 WebSocket 不能设置 Authorization 请求头，因此按现有聊天 WebSocket 的约定，
+ * 把当前 JWT 以 Authorization=Bearer xxx 放在握手查询参数中。
+ * VITE_API_URL 既支持开发环境的绝对地址，也支持生产环境的 /prod-api 相对代理地址。
+ */
+function buildChatSyncWsUrl(sessionId: string, token: string): string {
+  const apiBase = import.meta.env.VITE_API_URL || '';
+  const isAbsoluteApiUrl = /^https?:\/\//i.test(apiBase);
+  const baseUrl = isAbsoluteApiUrl ? apiBase : window.location.origin;
+  const url = new URL(baseUrl);
+  const basePath = isAbsoluteApiUrl ? url.pathname : apiBase;
+  const normalizedBasePath = basePath.replace(/\/$/, '');
+
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  url.pathname = `${normalizedBasePath}/chat/sync/ws`.replace(/\/+/g, '/');
+  url.search = '';
+  url.searchParams.set('sessionId', sessionId);
+  url.searchParams.set('Authorization', `Bearer ${token}`);
+  url.searchParams.set('clientId', import.meta.env.VITE_CLIENT_ID || '');
+  return url.toString();
+}
+
+function connectChatSync(sessionId: string, token: string) {
+  shouldKeepChatSyncConnected = true;
+  const socket = new WebSocket(buildChatSyncWsUrl(sessionId, token));
+  chatSyncSocket = socket;
+
+  socket.onopen = () => {
+    if (chatSyncSocket !== socket) {
+      return;
+    }
+    chatSyncReconnectAttempts = 0;
+  };
+
+  socket.onmessage = (message) => {
+    if (chatSyncSocket !== socket || typeof message.data !== 'string') {
+      return;
+    }
+    handleChatSyncMessage(message.data);
+  };
+
+  socket.onerror = () => {
+    // onclose 统一负责重连，避免 error/close 触发两次定时器。
+  };
+
+  socket.onclose = () => {
+    if (chatSyncSocket === socket) {
+      chatSyncSocket = null;
+    }
+    scheduleChatSyncReconnect(sessionId, token);
+  };
+}
+
+function disconnectChatSync() {
+  shouldKeepChatSyncConnected = false;
+  if (chatSyncReconnectTimer !== undefined) {
+    window.clearTimeout(chatSyncReconnectTimer);
+    chatSyncReconnectTimer = undefined;
+  }
+  if (chatSyncSocket) {
+    const socket = chatSyncSocket;
+    chatSyncSocket = null;
+    socket.close();
+  }
+}
+
+function scheduleChatSyncReconnect(sessionId: string, token: string) {
+  if (!shouldKeepChatSyncConnected || sessionId !== currentSessionId.value || token !== userStore.token) {
+    return;
+  }
+  if (chatSyncReconnectTimer !== undefined) {
+    return;
+  }
+  const delay = Math.min(1000 * 2 ** chatSyncReconnectAttempts, 10000);
+  chatSyncReconnectAttempts += 1;
+  chatSyncReconnectTimer = window.setTimeout(() => {
+    chatSyncReconnectTimer = undefined;
+    if (shouldKeepChatSyncConnected && sessionId === currentSessionId.value && token === userStore.token) {
+      connectChatSync(sessionId, token);
+    }
+  }, delay);
+}
+
+function handleChatSyncMessage(rawMessage: string) {
+  let rawEvent: ChatSyncEvent;
+  try {
+    rawEvent = JSON.parse(rawMessage) as ChatSyncEvent;
+  }
+  catch {
+    console.warn('[Chat Sync] 无法解析 WebSocket 消息:', rawMessage);
+    return;
+  }
+
+  const event = normalizeChatSyncEvent(rawEvent);
+  const eventType = String(event.type || event.event || '').toUpperCase();
+  const eventId = String(event.id || event.eventId || event.messageId || '');
+  if (eventId) {
+    if (receivedSyncEventIds.has(eventId)) {
+      return;
+    }
+    receivedSyncEventIds.add(eventId);
+    // 仅保留有限去重记录，防止长会话持续占用内存。
+    if (receivedSyncEventIds.size > 500) {
+      receivedSyncEventIds.clear();
+    }
+  }
+
+  switch (eventType) {
+    case 'USER_MESSAGE':
+      handleSyncUserMessage(event);
+      break;
+    case 'TOOL_PROGRESS':
+      handleSyncToolProgress(event);
+      break;
+    case 'ASSISTANT_DELTA':
+      handleSyncAssistantDelta(event);
+      break;
+    case 'ASSISTANT_DONE':
+      handleSyncAssistantDone(event);
+      break;
+    case 'VOICE_STATUS':
+      updateVoiceStatus(event.status ?? event.voiceStatus ?? event.state);
+      break;
+    default:
+      console.warn('[Chat Sync] 未知事件类型:', eventType);
+  }
+}
+
+function normalizeChatSyncEvent(rawEvent: ChatSyncEvent): Record<string, any> {
+  const nested = rawEvent.data && typeof rawEvent.data === 'object'
+    ? rawEvent.data
+    : rawEvent.payload && typeof rawEvent.payload === 'object'
+      ? rawEvent.payload
+      : {};
+  return { ...rawEvent, ...nested };
+}
+
+function getSyncRequestId(event: Record<string, any>): string {
+  const requestId = event.requestId ?? event.request_id ?? event.clientRequestId ?? event.client_request_id ?? event.id;
+  return requestId ? String(requestId) : `voice-${Date.now()}`;
+}
+
+function getSyncText(event: Record<string, any>): string {
+  return String(event.delta ?? event.content ?? event.message ?? event.text ?? '');
+}
+
+function handleSyncUserMessage(event: Record<string, any>) {
+  const content = getSyncText(event);
+  if (!content) {
+    return;
+  }
+  addMessage(content, true, { source: String(event.source || 'VOICE') });
+  bubbleListRef.value?.scrollToBottom();
+}
+
+function ensureVoiceAssistantMessage(requestId: string): MessageItem {
+  const existing = bubbleItems.value.find(item => item.requestId === requestId && item.source === 'VOICE');
+  if (existing) {
+    return existing;
+  }
+  addMessage('', false, { requestId, source: 'VOICE', toolCallEvents: [] });
+  return bubbleItems.value[bubbleItems.value.length - 1];
+}
+
+function handleSyncAssistantDelta(event: Record<string, any>) {
+  const content = getSyncText(event);
+  if (!content) {
+    return;
+  }
+  const message = ensureVoiceAssistantMessage(getSyncRequestId(event));
+  message.content += content;
+  message.loading = false;
+  bubbleItems.value = [...bubbleItems.value];
+  bubbleListRef.value?.scrollToBottom();
+}
+
+function handleSyncAssistantDone(event: Record<string, any>) {
+  const message = ensureVoiceAssistantMessage(getSyncRequestId(event));
+  message.typing = false;
+  message.loading = false;
+  if (message.thinkingStatus === 'thinking') {
+    message.thinkingStatus = 'end';
+  }
+  bubbleItems.value = [...bubbleItems.value];
+  bubbleListRef.value?.scrollToBottom();
+}
+
+function handleSyncToolProgress(event: Record<string, any>) {
+  const message = ensureVoiceAssistantMessage(getSyncRequestId(event));
+  const tool = event.tool && typeof event.tool === 'object' ? event.tool : event;
+  const toolId = String(tool.id ?? tool.toolId ?? tool.tool_id ?? '');
+  const name = String(tool.name ?? tool.toolName ?? tool.tool_name ?? 'Hermes 工具');
+  const status = normalizeToolStatus(tool.status ?? tool.state ?? event.status);
+  const result = tool.result ?? tool.output ?? tool.message ?? tool.content ?? event.result ?? event.output ?? event.content;
+  const tools = message.toolCallEvents ? [...message.toolCallEvents] : [];
+  const index = tools.findIndex(item => (toolId && item.id === toolId) || (!toolId && item.name === name && item.status === 'pending'));
+  const toolInfo: ToolCallInfo = {
+    key: index >= 0 ? tools[index].key : ++toolCallKeyCounter,
+    id: toolId || undefined,
+    name,
+    status,
+    result: formatToolResult(result),
+    timestamp: Date.now(),
+  };
+
+  if (index >= 0) {
+    tools[index] = { ...tools[index], ...toolInfo };
+  }
+  else {
+    tools.push(toolInfo);
+  }
+  message.toolCallEvents = tools;
+  bubbleItems.value = [...bubbleItems.value];
+  bubbleListRef.value?.scrollToBottom();
+}
+
+function normalizeToolStatus(status: unknown): ToolCallInfo['status'] {
+  const value = String(status || 'pending').toLowerCase();
+  if (['success', 'completed', 'complete', 'done'].includes(value)) {
+    return 'success';
+  }
+  if (['error', 'failed', 'failure'].includes(value)) {
+    return 'error';
+  }
+  return 'pending';
+}
+
+function formatToolResult(result: unknown): string | null {
+  if (result === undefined || result === null || result === '') {
+    return null;
+  }
+  return typeof result === 'string' ? result : JSON.stringify(result);
+}
+
+function updateVoiceStatus(status: unknown) {
+  const normalized = String(status || '').toUpperCase() as VoiceStatus;
+  if (normalized in voiceStatusText) {
+    voiceStatus.value = normalized;
+  }
 }
 
 async function startSSE(chatContent: string) {
@@ -727,7 +1011,11 @@ function copyToClipboard(text: string, key: number) {
     });
 }
 
-function addMessage(message: string, isUser: boolean) {
+function addMessage(
+  message: string,
+  isUser: boolean,
+  options: Pick<MessageItem, 'requestId' | 'source' | 'toolCallEvents'> = {},
+) {
   const i = bubbleItems.value.length;
   const obj: MessageItem = {
     key: i,
@@ -744,6 +1032,7 @@ function addMessage(message: string, isUser: boolean) {
     thinkingStatus: 'start',
     thinlCollapse: false,
     noStyle: !isUser,
+    ...options,
   };
   bubbleItems.value.push(obj);
 }
@@ -782,6 +1071,11 @@ function sendMessageByKey(key: number) {
   <div class="chat-with-id-container">
     <div class="chat-warp">
       <!-- 工具调用事件区域 -->
+      <div class="voice-status-hint" :class="`voice-status-${voiceStatus.toLowerCase()}`">
+        <el-icon><Microphone /></el-icon>
+        <span>语音状态：{{ voiceStatusText[voiceStatus] }}</span>
+      </div>
+
       <Transition name="tool-events-fade">
         <div v-if="hasToolCallEvents" class="tool-events-wrapper">
           <ToolCallCard
@@ -805,6 +1099,13 @@ function sendMessageByKey(key: number) {
 
       <BubbleList ref="bubbleListRef" :list="bubbleItems" max-height="calc(100vh - 240px)">
         <template #header="{ item }">
+          <div v-if="item.toolCallEvents?.length" class="assistant-tool-events">
+            <ToolCallCard
+              v-for="tool in item.toolCallEvents"
+              :key="tool.key"
+              :tool-info="tool"
+            />
+          </div>
           <Thinking
             v-if="item.reasoning_content"
             v-model="item.thinlCollapse"
@@ -999,6 +1300,41 @@ function sendMessageByKey(key: number) {
 
     .tool-events-wrapper {
       padding: 12px;
+    }
+
+    .voice-status-hint {
+      align-self: flex-start;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin: 12px 12px 0;
+      padding: 6px 10px;
+      color: #606266;
+      font-size: 13px;
+      line-height: 1;
+      background: #f4f4f5;
+      border-radius: 999px;
+
+      &.voice-status-listening {
+        color: #409eff;
+        background: #ecf5ff;
+      }
+
+      &.voice-status-recognizing,
+      &.voice-status-thinking {
+        color: #e6a23c;
+        background: #fdf6ec;
+      }
+
+      &.voice-status-speaking {
+        color: #67c23a;
+        background: #f0f9eb;
+      }
+    }
+
+    .assistant-tool-events {
+      width: min(520px, 100%);
+      margin-bottom: 8px;
     }
 
     .tool-events-fade-enter-active,
