@@ -4,7 +4,7 @@ import type { ConversationItem } from 'vue-element-plus-x/types/Conversations';
 import type { ChatSessionVo } from '@/api/session/types';
 import { useRoute, useRouter } from 'vue-router';
 import { get_session } from '@/api';
-import logo from '@/assets/images/logo.png';
+import logo from '@/assets/images/image.png';
 import Collapse from '@/layouts/components/Header/components/Collapse.vue';
 import { useDesignStore } from '@/stores';
 import { useSessionStore } from '@/stores/modules/session';
@@ -186,7 +186,11 @@ function handleMenuCommand(command: string, item: ConversationItem<ChatSessionVo
       <div v-if="!designStore.isCollapse" class="aside-header">
         <div class="flex items-center gap-8px hover:cursor-pointer" @click="handleCreatChat">
           <el-image :src="logo" alt="logo" fit="cover" class="logo-img" />
-          <span class="logo-text max-w-150px text-overflow">MSPIC-AI</span>
+          <div class="brand-copy">
+            <span class="logo-text text-overflow">MSPIC-AI</span>
+            <span class="brand-subtitle">DCMA 工业运行诊断系统</span>
+            <span class="brand-description">基于 Agent 的智能分析</span>
+          </div>
         </div>
         <Collapse class="ml-auto" />
       </div>
@@ -291,13 +295,13 @@ function handleMenuCommand(command: string, item: ConversationItem<ChatSessionVo
     .aside-header {
       display: flex;
       align-items: center;
-      height: 36px;
+      min-height: 42px;
       margin: 10px 12px 0;
       .logo-img {
         box-sizing: border-box;
         width: 36px;
         height: 36px;
-        padding: 4px;
+        padding: 0;
         overflow: hidden;
         background-color: #ffffff;
         border-radius: 50%;
@@ -307,13 +311,35 @@ function handleMenuCommand(command: string, item: ConversationItem<ChatSessionVo
           justify-content: center;
           width: 100%;
           height: 100%;
+          object-position: 17% center;
         }
       }
       .logo-text {
+        display: block;
         font-size: 16px;
         font-weight: 700;
         color: rgb(0 0 0 / 85%);
         transform: skewX(-2deg);
+      }
+      .brand-copy {
+        min-width: 0;
+      }
+      .brand-subtitle {
+        display: block;
+        margin-top: 1px;
+        overflow: hidden;
+        color: rgb(0 0 0 / 45%);
+        font-size: 11px;
+        line-height: 14px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .brand-description {
+        display: block;
+        margin-top: 1px;
+        color: rgb(0 0 0 / 38%);
+        font-size: 10px;
+        line-height: 12px;
       }
     }
 

@@ -11,6 +11,7 @@ import { useUserStore } from '@/stores/modules/user';
 const props = defineProps<{
   modelValue?: string;
   loading?: boolean;
+  placeholder?: string;
 }>();
 
 const emit = defineEmits<{
@@ -60,6 +61,12 @@ function closeHeader() {
   });
 }
 
+function focus() {
+  nextTick(() => {
+    senderRef.value?.focus();
+  });
+}
+
 watch(
   () => filesStore.filesList.length,
   (val) => {
@@ -75,6 +82,7 @@ watch(
 defineExpose({
   openHeader,
   closeHeader,
+  focus,
 });
 </script>
 
@@ -83,6 +91,7 @@ defineExpose({
     ref="senderRef"
     v-model="senderValue"
     class="chat-sender"
+    :placeholder="placeholder || '请输入你的问题…'"
     :auto-size="{
       maxRows: 6,
       minRows: 3,
@@ -143,6 +152,41 @@ defineExpose({
 <style scoped lang="scss">
 .chat-sender {
   width: 100%;
+
+  :deep(.el-sender) {
+    --el-border-color: #e1e7f0;
+    overflow: hidden;
+    background: #fff;
+    border: 1px solid #e1e7f0;
+    border-radius: 16px;
+    box-shadow: 0 8px 24px rgb(35 52 79 / 7%);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+
+    &:focus-within {
+      border-color: #8aafff;
+      box-shadow: 0 10px 26px rgb(57 118 234 / 14%);
+    }
+  }
+
+  :deep(.el-sender-content) {
+    padding: 14px 16px 10px;
+  }
+
+  :deep(.el-sender-content .el-textarea__inner) {
+    min-height: 56px !important;
+    color: #25324a;
+    font-size: 15px;
+    line-height: 1.65;
+  }
+
+  :deep(.el-sender-content .el-textarea__inner::placeholder) {
+    color: #a0a9b7;
+  }
+
+  :deep(.el-sender-updown-wrap) {
+    align-items: center;
+    min-height: 34px;
+  }
 }
 
 // 关键：让 prefix 区域扩展占满整行

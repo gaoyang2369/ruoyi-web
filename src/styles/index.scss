@@ -4,6 +4,9 @@
 @use './element-plus';
 @use './elx';
 @use './markdown';
-body{
+body {
+  min-width: 320px;
   overflow: hidden;
+  color: #27334a;
+  background: #f8faff;
 }
