@@ -10,6 +10,7 @@ import { useHookFetch } from 'hook-fetch/vue';
 import { nextTick } from 'vue';
 import { useRoute } from 'vue-router';
 import { send } from '@/api';
+import assistantAvatar from '@/assets/images/logo.png';
 import ChatSender from '@/components/ChatSender/index.vue';
 import { useAgentStore } from '@/stores/modules/agent';
 import { useChatStore } from '@/stores/modules/chat';
@@ -17,7 +18,7 @@ import { useDesignStore } from '@/stores/modules/design';
 import { useModelStore } from '@/stores/modules/model';
 import { useUserStore } from '@/stores/modules/user';
 import { codeXRender } from '@/utils/markdownRenderers';
-import ToolCallCard from './components/ToolCallCard.vue';
+import ToolCallGroup from './components/ToolCallGroup.vue';
 import WfNodeCard from './components/WfNodeCard.vue';
 
 type MessageItem = BubbleProps & {
@@ -866,8 +867,9 @@ function handleWorkflowEvent(
       ...bubbleItems.value,
       {
         key: bubbleItems.value.length,
-        avatar: 'https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png',
+        avatar: assistantAvatar,
         avatarSize: '32px',
+        maxWidth: '100%',
         role: 'system',
         placement: 'start',
         isMarkdown: false,
@@ -1021,8 +1023,9 @@ function addMessage(
     key: i,
     avatar: isUser
       ? avatar.value
-      : 'https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png',
+      : assistantAvatar,
     avatarSize: '32px',
+    maxWidth: isUser ? '68%' : '100%',
     role: isUser ? 'user' : 'system',
     placement: isUser ? 'end' : 'start',
     isMarkdown: !isUser,
@@ -1070,19 +1073,9 @@ function sendMessageByKey(key: number) {
 <template>
   <div class="chat-with-id-container">
     <div class="chat-warp">
-      <!-- 工具调用事件区域 -->
-      <div class="voice-status-hint" :class="`voice-status-${voiceStatus.toLowerCase()}`">
-        <el-icon><Microphone /></el-icon>
-        <span>语音状态：{{ voiceStatusText[voiceStatus] }}</span>
-      </div>
-
       <Transition name="tool-events-fade">
         <div v-if="hasToolCallEvents" class="tool-events-wrapper">
-          <ToolCallCard
-            v-for="tool in toolCallEvents"
-            :key="tool.key"
-            :tool-info="tool"
-          />
+          <ToolCallGroup :tools="toolCallEvents" />
         </div>
       </Transition>
 
@@ -1100,11 +1093,7 @@ function sendMessageByKey(key: number) {
       <BubbleList ref="bubbleListRef" :list="bubbleItems" max-height="calc(100vh - 240px)">
         <template #header="{ item }">
           <div v-if="item.toolCallEvents?.length" class="assistant-tool-events">
-            <ToolCallCard
-              v-for="tool in item.toolCallEvents"
-              :key="tool.key"
-              :tool-info="tool"
-            />
+            <ToolCallGroup :tools="item.toolCallEvents" />
           </div>
           <Thinking
             v-if="item.reasoning_content"
@@ -1191,9 +1180,14 @@ function sendMessageByKey(key: number) {
       </BubbleList>
 
       <div class="sender-wrapper">
+        <div class="voice-status-hint" :class="`voice-status-${voiceStatus.toLowerCase()}`">
+          <el-icon><Microphone /></el-icon>
+          <span>{{ voiceStatusText[voiceStatus] }}</span>
+        </div>
         <ChatSender
           ref="chatSenderRef"
           v-model="inputValue"
+          compact
           :loading="isLoading"
           @submit="startSSE"
           @cancel="cancelSSE"
@@ -1207,6 +1201,16 @@ function sendMessageByKey(key: number) {
 .user-bubble.editing {
   background: transparent !important;
   padding: 0;
+}
+
+.user-bubble {
+  max-width: 100%;
+  padding: 11px 14px;
+  color: #34445c;
+  line-height: 1.6;
+  background: #f1f4f8;
+  border: 1px solid #e6ebf1;
+  border-radius: 14px 14px 4px;
 }
 
 :deep(.editing-bubble.el-bubble) {
@@ -1284,14 +1288,13 @@ function sendMessageByKey(key: number) {
   flex-direction: column;
   align-items: center;
   width: 100%;
-  max-width: 1200px;
   height: 100%;
 
   .chat-warp {
     display: flex;
     flex-direction: column;
-    justify-content: space-between;
-    width: 100%;
+    width: clamp(820px, 68vw, 1180px);
+    max-width: calc(100vw - 64px);
     height: calc(100vh - 60px);
 
     .thinking-chain-warp {
@@ -1299,16 +1302,19 @@ function sendMessageByKey(key: number) {
     }
 
     .tool-events-wrapper {
-      padding: 12px;
+      flex: 0 0 auto;
+      padding: 4px 12px 0;
     }
 
     .voice-status-hint {
-      align-self: flex-start;
+      position: absolute;
+      top: -31px;
+      left: 8px;
+      z-index: 1;
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      margin: 12px 12px 0;
-      padding: 6px 10px;
+      padding: 5px 9px;
       color: #606266;
       font-size: 13px;
       line-height: 1;
@@ -1333,7 +1339,7 @@ function sendMessageByKey(key: number) {
     }
 
     .assistant-tool-events {
-      width: min(520px, 100%);
+      width: min(640px, 100%);
       margin-bottom: 8px;
     }
 
@@ -1351,17 +1357,32 @@ function sendMessageByKey(key: number) {
     .sender-wrapper {
       position: relative;
       width: 100%;
-      margin-bottom: 22px;
+      flex: 0 0 auto;
+      margin: 34px 0 22px;
     }
   }
 
   :deep() {
     .el-bubble-list {
-      padding-top: 24px;
+      flex: 1;
+      min-height: 0;
+      padding-top: 28px;
     }
     .el-bubble {
-      padding: 0 12px;
-      padding-bottom: 24px;
+      padding: 0 10px 28px;
+    }
+    .el-bubble-start .el-bubble-content {
+      width: 100%;
+      max-width: 100% !important;
+    }
+    .el-bubble-end .el-bubble-content {
+      max-width: 68% !important;
+      background: transparent;
+      padding: 0;
+    }
+    .el-bubble-avatar-size .el-avatar {
+      border: 1px solid #dce7f7;
+      background: #fff;
     }
     .el-typewriter {
       overflow: hidden;
@@ -1372,8 +1393,8 @@ function sendMessageByKey(key: number) {
     }
     .markdown-body {
       background-color: transparent;
-      width: auto;
-      max-width: none;
+      width: 100%;
+      max-width: 100%;
       overflow: visible;
     }
     .markdown-elxLanguage-header-div {
@@ -1384,6 +1405,13 @@ function sendMessageByKey(key: number) {
       width: 100%;
       overflow: visible;
     }
+  }
+}
+
+@media (max-width: 900px) {
+  .chat-with-id-container .chat-warp {
+    width: 100%;
+    max-width: calc(100vw - 32px);
   }
 }
 

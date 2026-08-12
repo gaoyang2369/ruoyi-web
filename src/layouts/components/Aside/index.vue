@@ -189,7 +189,6 @@ function handleMenuCommand(command: string, item: ConversationItem<ChatSessionVo
           <div class="brand-copy">
             <span class="logo-text text-overflow">MSPIC-AI</span>
             <span class="brand-subtitle">DCMA 工业运行诊断系统</span>
-            <span class="brand-description">基于 Agent 的智能分析</span>
           </div>
         </div>
         <Collapse class="ml-auto" />
@@ -333,13 +332,6 @@ function handleMenuCommand(command: string, item: ConversationItem<ChatSessionVo
         line-height: 14px;
         text-overflow: ellipsis;
         white-space: nowrap;
-      }
-      .brand-description {
-        display: block;
-        margin-top: 1px;
-        color: rgb(0 0 0 / 38%);
-        font-size: 10px;
-        line-height: 12px;
       }
     }
 

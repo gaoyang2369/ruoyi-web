@@ -12,6 +12,8 @@ const props = defineProps<{
   modelValue?: string;
   loading?: boolean;
   placeholder?: string;
+  /** 已进入会话时使用紧凑输入区，首页保留原有大输入框。 */
+  compact?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -90,11 +92,11 @@ defineExpose({
   <Sender
     ref="senderRef"
     v-model="senderValue"
-    class="chat-sender"
+    class="chat-sender" :class="[{ 'chat-sender--compact': compact }]"
     :placeholder="placeholder || '请输入你的问题…'"
     :auto-size="{
-      maxRows: 6,
-      minRows: 3,
+      maxRows: compact ? 5 : 6,
+      minRows: compact ? 2 : 3,
     }"
     variant="updown"
     clearable
@@ -186,6 +188,17 @@ defineExpose({
   :deep(.el-sender-updown-wrap) {
     align-items: center;
     min-height: 34px;
+  }
+}
+
+.chat-sender--compact {
+  :deep(.el-sender-content) {
+    padding: 10px 16px 8px;
+  }
+
+  :deep(.el-sender-content .el-textarea__inner) {
+    min-height: 44px !important;
+    line-height: 1.6;
   }
 }
 

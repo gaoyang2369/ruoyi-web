@@ -812,6 +812,86 @@
   }
 }
 
+// 聊天报告阅读层：覆盖上方 GitHub Markdown 的通用默认值，兼顾长报告与窄屏收缩。
+.markdown-body {
+  font-size: 15.5px;
+  line-height: 1.7;
+
+  h1, h2, h3 {
+    color: #1d2b42;
+    font-weight: 650;
+    letter-spacing: .01em;
+  }
+
+  h1 {
+    margin: 30px 0 18px;
+    padding-bottom: 10px;
+    font-size: 25px;
+  }
+
+  h2 {
+    margin: 28px 0 14px;
+    padding-bottom: 8px;
+    font-size: 20px;
+  }
+
+  h3 {
+    margin: 22px 0 10px;
+    font-size: 17px;
+  }
+
+  p { margin: 0 0 14px; line-height: 1.72; }
+  strong { color: #1e3556; font-weight: 650; }
+
+  ul, ol {
+    padding-left: 1.7em;
+    margin: 8px 0 16px;
+    li { padding-left: 3px; margin: 5px 0; }
+  }
+
+  blockquote {
+    margin: 16px 0;
+    padding: 11px 14px;
+    color: #4d6380;
+    background: #f4f8fd;
+    border-left: 4px solid #7ba9df;
+    border-radius: 0 8px 8px 0;
+  }
+
+  table {
+    width: 100%;
+    max-width: 100%;
+    margin: 16px 0;
+    overflow-x: auto;
+    color: #34445b;
+    font-size: 14px;
+    line-height: 1.55;
+    border: 1px solid #dfe7f0;
+    border-radius: 8px;
+
+    th { color: #334862; background: #f3f7fb; }
+    td, th { padding: 9px 12px; border-color: #dfe7f0; }
+    tr { background: transparent; }
+    tr:nth-child(2n) { background: #fafcff; }
+  }
+
+  code, samp, tt {
+    padding: .14em .38em;
+    color: #304b71;
+    font-size: .88em;
+    background: #f0f4f8;
+    border: 1px solid #e1e8f0;
+    border-radius: 4px;
+  }
+}
+
+[data-theme='dark'] .markdown-body {
+  h1, h2, h3, strong { color: #d9e7fa; }
+  blockquote { color: #bfd4ef; background: rgb(50 83 121 / 32%); border-left-color: #6095ce; }
+  table { color: #d3dce8; border-color: #3b4a5d; th { color: #e0e9f6; background: #29394d; } tr:nth-child(2n) { background: rgb(255 255 255 / 3%); } td, th { border-color: #3b4a5d; } }
+  code, samp, tt { color: #d8e7fb; background: #263547; border-color: #3a4c61; }
+}
+
 @media (prefers-color-scheme: dark) {
   .markdown-body,
   [data-theme="dark"] {

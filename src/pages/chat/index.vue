@@ -22,7 +22,7 @@ const sessionId = computed(() => route.params?.id);
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   width: calc(100% - 32px);
   height: 100%;
   padding: 0 16px;

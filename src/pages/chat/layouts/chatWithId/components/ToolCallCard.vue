@@ -7,6 +7,21 @@ const props = defineProps<{
 
 const isExpanded = ref(false);
 
+const friendlyToolName = computed(() => {
+  const names: Record<string, string> = {
+    get_device_status: '设备运行状态查询',
+    getDeviceStatus: '设备运行状态查询',
+    query_alarm: '告警记录查询',
+    queryAlarm: '告警记录查询',
+    query_trend: '运行趋势分析',
+    queryTrend: '运行趋势分析',
+    search_manual: '故障知识检索',
+    searchManual: '故障知识检索',
+  };
+  const name = props.toolInfo.name || '';
+  return names[name] || name.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ') || '分析工具';
+});
+
 // 状态图标和颜色映射
 const statusConfig = computed(() => {
   switch (props.toolInfo.status) {
@@ -68,6 +83,11 @@ const formattedResult = computed(() => {
     return String(props.toolInfo.result);
   }
 });
+
+const hasTechnicalResult = computed(() => {
+  const result = formattedResult.value?.trim() || '';
+  return /^[[{]/.test(result) || /https?:\/\//i.test(result);
+});
 </script>
 
 <template>
@@ -82,7 +102,7 @@ const formattedResult = computed(() => {
           </el-icon>
         </div>
         <!-- 工具名称 -->
-        <span class="tool-name">{{ toolInfo.name || '工具调用' }}</span>
+        <span class="tool-name">{{ friendlyToolName }}</span>
         <!-- 状态标签 -->
         <el-tag
           :style="{
@@ -116,7 +136,7 @@ const formattedResult = computed(() => {
     <el-collapse-transition>
       <div v-show="isExpanded" class="card-content">
         <!-- 结果详情 -->
-        <div v-if="formattedResult" class="result-section">
+        <div v-if="formattedResult && !hasTechnicalResult" class="result-section">
           <div class="section-label">
             执行结果
           </div>
@@ -132,7 +152,7 @@ const formattedResult = computed(() => {
           <span>正在执行中...</span>
         </div>
         <div v-else class="no-result">
-          <span>暂无返回结果</span>
+          <span>{{ hasTechnicalResult ? '工具已返回结果，内容已纳入本次分析。' : '暂无返回结果' }}</span>
         </div>
       </div>
     </el-collapse-transition>
