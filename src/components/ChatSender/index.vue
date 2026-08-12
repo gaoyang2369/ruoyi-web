@@ -1,6 +1,7 @@
 <!-- 公共聊天输入框组件 -->
 <script setup lang="ts">
 import type { FilesCardProps } from 'vue-element-plus-x/types/FilesCard';
+import type { BrowserVoiceStatus } from '@/composables/useBrowserVoice';
 import { nextTick, ref, watch } from 'vue';
 import { Sender } from 'vue-element-plus-x';
 import AgentSelect from '@/components/AgentSelect/index.vue';
@@ -14,12 +15,18 @@ const props = defineProps<{
   placeholder?: string;
   /** 已进入会话时使用紧凑输入区，首页保留原有大输入框。 */
   compact?: boolean;
+  /** Chat 页的浏览器语音唤醒入口。 */
+  showVoiceWake?: boolean;
+  voiceEnabled?: boolean;
+  voiceStatus?: BrowserVoiceStatus;
+  voiceSupported?: boolean;
 }>();
 
 const emit = defineEmits<{
   'update:modelValue': [value: string];
   'submit': [content: string];
   'cancel': [];
+  'toggleVoiceWake': [];
 }>();
 
 const filesStore = useFilesStore();
@@ -32,6 +39,24 @@ const senderValue = computed({
 });
 
 const senderRef = ref<InstanceType<typeof Sender> | null>(null);
+
+const voiceWakeText = computed(() => {
+  if (!props.voiceEnabled || props.voiceStatus === 'OFF') {
+    return '语音唤醒';
+  }
+  switch (props.voiceStatus) {
+    case 'WAITING_WAKE':
+      return '等待“小智同学”';
+    case 'LISTENING_COMMAND':
+      return '正在聆听';
+    case 'THINKING':
+      return '正在分析';
+    case 'ERROR':
+      return '语音不可用';
+    default:
+      return '语音唤醒';
+  }
+});
 
 function handleSubmit() {
   if (!isLoggedIn.value) {
@@ -100,7 +125,6 @@ defineExpose({
     }"
     variant="updown"
     clearable
-    allow-speech
     :loading="loading"
     @submit="handleSubmit"
     @cancel="handleCancel"
@@ -142,6 +166,18 @@ defineExpose({
         <!-- 左侧按钮组 -->
         <div class="left-buttons">
           <AgentSelect />
+          <el-tooltip v-if="showVoiceWake" :content="voiceSupported ? '点击开启或关闭语音唤醒' : '当前浏览器不支持语音识别'" placement="top">
+            <el-button
+              class="voice-wake-button"
+              size="small"
+              :type="voiceEnabled ? 'primary' : 'default'"
+              :disabled="!voiceSupported"
+              @click="emit('toggleVoiceWake')"
+            >
+              <el-icon><Microphone /></el-icon>
+              <span>{{ voiceWakeText }}</span>
+            </el-button>
+          </el-tooltip>
         </div>
 
         <!-- 右侧上传按钮 -->
@@ -221,5 +257,9 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.voice-wake-button {
+  padding-inline: 9px;
 }
 </style>

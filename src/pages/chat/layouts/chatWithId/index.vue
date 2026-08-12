@@ -12,6 +12,7 @@ import { useRoute } from 'vue-router';
 import { send } from '@/api';
 import assistantAvatar from '@/assets/images/logo.png';
 import ChatSender from '@/components/ChatSender/index.vue';
+import { useBrowserVoice } from '@/composables/useBrowserVoice';
 import { useAgentStore } from '@/stores/modules/agent';
 import { useChatStore } from '@/stores/modules/chat';
 import { useDesignStore } from '@/stores/modules/design';
@@ -63,6 +64,7 @@ const inputValue = ref('');
 const chatSenderRef = ref<InstanceType<typeof ChatSender> | null>(null);
 const bubbleItems = ref<MessageItem[]>([]);
 const bubbleListRef = ref<BubbleListInstance | null>(null);
+const browserVoice = useBrowserVoice();
 
 const voiceStatus = ref<VoiceStatus>('IDLE');
 const voiceStatusText: Record<VoiceStatus, string> = {
@@ -118,11 +120,16 @@ const {
   },
 });
 
+browserVoice.onCommand((text) => {
+  void startSSE(text);
+});
+
 // 组件挂载初始化
 onMounted(() => {
   bubbleItems.value.forEach((item) => {
     copyIconMap.value[item.key] = 'CopyDocument';
   });
+  document.addEventListener('visibilitychange', handleVisibilityChange);
 });
 
 const currentSessionId = computed(() => {
@@ -144,6 +151,8 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  document.removeEventListener('visibilitychange', handleVisibilityChange);
+  browserVoice.disable();
   disconnectChatSync();
 });
 
@@ -153,6 +162,7 @@ let isThinking = false;
 watch(
   () => route.params?.id,
   async (_id_) => {
+    browserVoice.disable();
     if (_id_) {
       // 切换会话时清空工具调用事件与工作流节点事件
       toolCallEvents.value = [];
@@ -448,8 +458,12 @@ function updateVoiceStatus(status: unknown) {
 async function startSSE(chatContent: string) {
   if (!userStore.token) {
     userStore.ensureLogin('/chat', '登录后即可继续当前对话');
+    // 浏览器语音命令未能发起请求时，恢复等待唤醒。
+    browserVoice.resume();
     return;
   }
+
+  browserVoice.pause();
 
   try {
     // 清空上一次的工具调用事件
@@ -540,6 +554,7 @@ async function startSSE(chatContent: string) {
       isThinking = false;
       bubbleItems.value = [...bubbleItems.value];
     }
+    browserVoice.resume();
   }
 }
 
@@ -578,6 +593,7 @@ async function startResumeSSE(feedbackContent: string) {
   if (!feedbackContent.trim() || !wfRuntimeUuid) {
     return;
   }
+  browserVoice.pause();
   try {
     addMessage(feedbackContent, true);
     addMessage('', false);
@@ -626,6 +642,7 @@ async function startResumeSSE(feedbackContent: string) {
       isThinking = false;
       bubbleItems.value = [...bubbleItems.value];
     }
+    browserVoice.resume();
   }
 }
 
@@ -996,6 +1013,25 @@ async function cancelSSE() {
   if (bubbleItems.value.length) {
     bubbleItems.value[bubbleItems.value.length - 1].typing = false;
   }
+  browserVoice.resume();
+}
+
+function toggleVoiceWake() {
+  if (browserVoice.enabled.value) {
+    browserVoice.disable();
+  }
+  else {
+    browserVoice.enable();
+  }
+}
+
+function handleVisibilityChange() {
+  if (document.hidden) {
+    browserVoice.pause();
+  }
+  else if (!isLoading.value) {
+    browserVoice.resume();
+  }
 }
 
 function copyToClipboard(text: string, key: number) {
@@ -1180,17 +1216,18 @@ function sendMessageByKey(key: number) {
       </BubbleList>
 
       <div class="sender-wrapper">
-        <div class="voice-status-hint" :class="`voice-status-${voiceStatus.toLowerCase()}`">
-          <el-icon><Microphone /></el-icon>
-          <span>{{ voiceStatusText[voiceStatus] }}</span>
-        </div>
         <ChatSender
           ref="chatSenderRef"
           v-model="inputValue"
           compact
           :loading="isLoading"
+          show-voice-wake
+          :voice-enabled="browserVoice.enabled.value"
+          :voice-status="browserVoice.status.value"
+          :voice-supported="browserVoice.supported.value"
           @submit="startSSE"
           @cancel="cancelSSE"
+          @toggle-voice-wake="toggleVoiceWake"
         />
       </div>
     </div>
