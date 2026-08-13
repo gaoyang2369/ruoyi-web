@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import type { CompletenessCategory, OperationReportResult, ReportHealthStatus } from '@/api/report';
+import type { OperationReportResult, ReportHealthStatus, ReportRecommendation } from '@/api/report';
 import { useRoute, useRouter } from 'vue-router';
 import { getOperationReport } from '@/api/report';
-import ReportCompletenessChart from './components/ReportCompletenessChart.vue';
 import ReportStatusTimeline from './components/ReportStatusTimeline.vue';
 import ReportTrendChart from './components/ReportTrendChart.vue';
 
@@ -13,10 +12,9 @@ const errorMessage = ref('');
 const report = ref<OperationReportResult | null>(null);
 interface ReportChartInstance { resizeForPrint: () => void }
 const trendChartRefs = ref<ReportChartInstance[]>([]);
-const completenessChartRef = ref<ReportChartInstance | null>(null);
 const isPreparingPrint = ref(false);
 
-const metricLabels: Record<string, string> = {
+const oldMetricLabels: Record<string, string> = {
   dcVoltage: '直流电压',
   currentActual: '实际电流',
   speedActual: '实际转速',
@@ -26,6 +24,17 @@ const metricLabels: Record<string, string> = {
   motorLoadRate: '电机负载率',
   inverterLoadRate: '变频器负载率',
 };
+
+const metricLabels = computed(() => {
+  const displayNames: Record<string, string> = {};
+  for (const item of [...(report.value?.metrics || []), ...(report.value?.trends || [])]) {
+    if (item.displayName) {
+      displayNames[item.metricName] = item.displayName;
+    }
+  }
+
+  return { ...oldMetricLabels, ...displayNames };
+});
 
 const statusLabels: Record<ReportHealthStatus, string> = {
   NORMAL: '正常',
@@ -43,31 +52,26 @@ const trendPanels = [
   { title: '直流电压趋势', metricNames: ['dcVoltage'] },
 ];
 
-const kpiMetrics = computed(() => {
-  const preferred = ['actualPower', 'currentActual', 'dcVoltage', 'motorLoadRate', 'motorTemp'];
-  return preferred
-    .map(name => report.value?.metrics.find(metric => metric.metricName === name))
-    .filter((metric): metric is NonNullable<typeof metric> => Boolean(metric && report.value?.metricUnits[metric.metricName]
-      && (metric.current ?? metric.average) !== null))
-    .slice(0, 4);
-});
-
-const overallCompleteness = computed<CompletenessCategory | null>(() => {
-  const quality = report.value?.dataQuality;
-  return quality
-    ? { categoryName: '报告总体数据完整率', expectedCount: quality.rawRecordCount, actualCount: quality.validRecordCount, completeness: quality.completeness }
-    : null;
-});
-
-const diagnosisLabels: Record<string, string> = {
-  WARNING_DETECTED: '检测到报警',
-  FAULT_DETECTED: '检测到故障',
-  NO_EXPLICIT_FAULT: '未发现明确故障',
-  DATA_INSUFFICIENT: '数据不足',
-  UNKNOWN: '未知',
-};
-
 const visibleEvidence = computed(() => report.value?.evidence.filter(item => item.userVisible) || []);
+const executiveSummary = computed(() => report.value?.narrative?.executiveSummary || report.value?.summary.conclusion || '暂无执行摘要。');
+const operatingFindings = computed(() => report.value?.narrative?.operatingFindings?.length
+  ? report.value.narrative.operatingFindings
+  : report.value?.diagnosis.decisionRationale || []);
+const anomalyAnalysis = computed(() => report.value?.narrative?.anomalyAnalysis?.length
+  ? report.value.narrative.anomalyAnalysis
+  : report.value?.diagnosis.decisionRationale || []);
+const displayRecommendations = computed(() => report.value?.narrative?.recommendations?.length
+  ? report.value.narrative.recommendations
+  : report.value?.recommendations || []);
+const riskNotice = computed(() => report.value?.narrative?.riskNotice || '');
+
+function metricDisplayName(metricName: string) {
+  return metricLabels.value[metricName] || metricName;
+}
+
+function recommendationTitle(item: ReportRecommendation) {
+  return item.action || item.content || '未提供处理建议';
+}
 
 onMounted(async () => {
   window.addEventListener('beforeprint', handleBeforePrint);
@@ -107,10 +111,6 @@ function formatNumber(value: number | null | undefined) {
   return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
 }
 
-function formatPercent(value: number | null | undefined) {
-  return value === null || value === undefined ? '无' : `${(value * 100).toFixed(1)}%`;
-}
-
 function unitOf(metricName: string) {
   return report.value?.metricUnits[metricName] || '—';
 }
@@ -141,7 +141,6 @@ function waitForLayoutFrame() {
 async function resizeChartsForCurrentLayout() {
   await nextTick();
   await waitForLayoutFrame();
-  completenessChartRef.value?.resizeForPrint();
   trendChartRefs.value.forEach(chart => chart.resizeForPrint());
 }
 
@@ -225,11 +224,6 @@ function handleAfterPrint() {
             <small>仅表示整个分析周期内的确定性结论</small>
           </article>
           <article>
-            <span>数据完整率</span>
-            <strong>{{ formatPercent(report.dataQuality?.completeness) }}</strong>
-            <small>有效样本 {{ report.dataQuality?.validRecordCount ?? 0 }} 条</small>
-          </article>
-          <article>
             <span>异常代码</span>
             <strong>{{ report.summary.faultCodes.length + report.summary.alarmCodes.length }}</strong>
             <small>故障 {{ report.summary.faultCodes.length }} · 报警 {{ report.summary.alarmCodes.length }}</small>
@@ -240,11 +234,13 @@ function handleAfterPrint() {
           <div class="section-heading">
             <span>01</span><h2>执行摘要</h2>
           </div>
-          <p>{{ report.summary.conclusion }}</p>
-          <div v-if="report.narrative?.executiveSummary" class="model-narrative">
-            <strong>运行摘要</strong>
-            <p>{{ report.narrative.executiveSummary }}</p>
-          </div>
+          <p>{{ executiveSummary }}</p>
+          <el-alert
+            v-if="report.dataQuality && !report.dataQuality.sufficient"
+            type="warning"
+            :closable="false"
+            title="部分运行数据缺失，本报告中的趋势分析仅供参考。"
+          />
           <el-alert
             v-if="report.period.fallbackToLatestData"
             type="warning"
@@ -254,41 +250,8 @@ function handleAfterPrint() {
         </section>
 
         <section class="report-section report-print-block">
-          <div class="section-heading">
-            <span>02</span><h2>数据质量与关键指标</h2>
-          </div>
-          <div class="quality-grid">
-            <div>
-              <h3 class="quality-title">
-                数据质量
-              </h3>
-              <dl>
-                <div><dt>采样记录</dt><dd>{{ report.dataQuality?.rawRecordCount ?? 0 }}</dd></div>
-                <div><dt>有效记录</dt><dd>{{ report.dataQuality?.validRecordCount ?? 0 }}</dd></div>
-                <div><dt>重复采样</dt><dd>{{ report.dataQuality?.duplicateCount ?? 0 }}</dd></div>
-                <div><dt>无效时间记录</dt><dd>{{ report.dataQuality?.invalidTimeCount ?? 0 }}</dd></div>
-                <div><dt>采样缺口</dt><dd>{{ report.dataQuality?.gapCount ?? 0 }}</dd></div>
-              </dl>
-              <div v-if="kpiMetrics.length" class="kpi-grid">
-                <article v-for="metric in kpiMetrics" :key="metric.metricName">
-                  <span>{{ metricLabels[metric.metricName] || metric.metricName }}</span>
-                  <strong>{{ formatNumber(metric.current ?? metric.average) }}</strong>
-                  <small v-if="report.metricUnits[metric.metricName]">{{ report.metricUnits[metric.metricName] }}</small>
-                </article>
-              </div>
-            </div>
-            <div v-if="overallCompleteness" class="completeness-panel">
-              <p class="completeness-name">
-                报告总体数据完整率
-              </p>
-              <ReportCompletenessChart ref="completenessChartRef" :category="overallCompleteness" />
-            </div>
-          </div>
-        </section>
-
-        <section class="report-section report-print-block">
           <div class="section-heading report-print-block">
-            <span>03</span><h2>运行时间线</h2>
+            <span>02</span><h2>运行时间线</h2>
           </div>
           <ReportStatusTimeline
             :window-start="report.period.windowStart" :window-end="report.period.windowEnd"
@@ -298,7 +261,7 @@ function handleAfterPrint() {
 
         <section class="report-section trend-section">
           <div class="section-heading report-print-block">
-            <span>04</span><h2>运行趋势</h2>
+            <span>03</span><h2>运行趋势</h2>
           </div>
           <p v-if="report.events.length" class="trend-event-hint report-print-block">
             淡色区域为异常窗口，橙色虚线为触发边界，绿色虚线为恢复边界。
@@ -312,10 +275,10 @@ function handleAfterPrint() {
             />
           </div>
           <el-empty v-if="!report.trends.length" description="本报告快照中没有可展示的真实趋势数据" />
-          <div v-if="report.narrative?.operatingFindings.length" class="operating-findings">
+          <div v-if="operatingFindings.length" class="operating-findings">
             <h3>运行解读</h3>
             <ul>
-              <li v-for="item in report.narrative.operatingFindings" :key="item">
+              <li v-for="item in operatingFindings" :key="item">
                 {{ item }}
               </li>
             </ul>
@@ -324,14 +287,14 @@ function handleAfterPrint() {
 
         <section class="report-section report-print-block">
           <div class="section-heading">
-            <span>05</span><h2>指标明细</h2>
+            <span>04</span><h2>指标明细</h2>
           </div>
           <div class="table-wrap">
             <table>
               <thead><tr><th>指标</th><th>单位</th><th>当前</th><th>平均</th><th>最小</th><th>最大</th><th>样本数</th><th>峰值时间</th></tr></thead>
               <tbody>
                 <tr v-for="metric in report.metrics" :key="metric.metricName">
-                  <td>{{ metricLabels[metric.metricName] || metric.metricName }}</td>
+                  <td>{{ metric.displayName || metricDisplayName(metric.metricName) }}</td>
                   <td>{{ unitOf(metric.metricName) }}</td>
                   <td>{{ formatNumber(metric.current) }}</td>
                   <td>{{ formatNumber(metric.average) }}</td>
@@ -351,43 +314,36 @@ function handleAfterPrint() {
         <section class="report-section report-print-block">
           <article>
             <div class="section-heading">
-              <span>06</span><h2>诊断与异常分析</h2>
+              <span>05</span><h2>诊断与异常分析</h2>
             </div>
-            <p>诊断状态：{{ diagnosisLabels[report.diagnosis.status] || report.diagnosis.status }}</p>
-            <ul v-if="report.diagnosis.decisionRationale.length">
-              <li v-for="item in report.diagnosis.decisionRationale" :key="item">
+            <ul v-if="anomalyAnalysis.length">
+              <li v-for="item in anomalyAnalysis" :key="item">
                 {{ item }}
               </li>
             </ul>
             <p v-else class="empty-copy">
               没有额外诊断判断说明。
             </p>
-            <div v-if="report.narrative?.anomalyAnalysis.length" class="model-narrative">
-              <strong>异常分析</strong>
-              <ul>
-                <li v-for="item in report.narrative.anomalyAnalysis" :key="item">
-                  {{ item }}
-                </li>
-              </ul>
-            </div>
           </article>
         </section>
         <section class="report-section report-print-block">
           <article>
             <div class="section-heading">
-              <span>07</span><h2>处理建议</h2>
+              <span>06</span><h2>处理建议</h2>
             </div>
-            <ol v-if="report.narrative?.recommendations.length">
-              <li v-for="item in report.narrative.recommendations" :key="`${item.priority}-${item.action}`">
-                <strong>{{ item.priority }}</strong> · {{ item.action }}
-                <small class="recommendation-basis">依据：{{ item.basis.join('；') }}</small>
+            <ul v-if="displayRecommendations.length" class="recommendation-list">
+              <li v-for="item in displayRecommendations" :key="`${item.priority}-${recommendationTitle(item)}`">
+                <div class="recommendation-title">
+                  <span v-if="item.priority" class="priority-tag">{{ item.priority }}</span>
+                  <strong>{{ recommendationTitle(item) }}</strong>
+                </div>
+                <ol v-if="item.steps?.length" class="recommendation-steps">
+                  <li v-for="step in item.steps" :key="step">
+                    {{ step }}
+                  </li>
+                </ol>
               </li>
-            </ol>
-            <ol v-else-if="report.recommendations.length">
-              <li v-for="item in report.recommendations" :key="item.content">
-                {{ item.content }}
-              </li>
-            </ol>
+            </ul>
             <p v-else class="empty-copy">
               没有结构化处理建议。
             </p>
@@ -396,7 +352,7 @@ function handleAfterPrint() {
 
         <section class="report-section report-print-block">
           <div class="section-heading">
-            <span>08</span><h2>诊断依据</h2>
+            <span>07</span><h2>诊断依据</h2>
           </div>
           <ul v-if="visibleEvidence.length" class="evidence-list">
             <li v-for="(item, index) in visibleEvidence" :key="item.evidenceCode || item.evidenceId || index">
@@ -408,19 +364,16 @@ function handleAfterPrint() {
           <p v-else class="empty-copy">
             没有可向用户展示的证据条目。
           </p>
-          <p class="source-digest">
-            来源摘要：{{ report.period.sourceDigest || '无' }}
-          </p>
         </section>
 
         <section class="report-section report-print-block">
           <div class="section-heading">
-            <span>09</span><h2>结论边界</h2>
+            <span>08</span><h2>结论边界</h2>
           </div>
-          <p v-if="report.narrative?.riskNotice" class="narrative-copy">
-            {{ report.narrative.riskNotice }}
+          <p v-if="riskNotice" class="narrative-copy">
+            {{ riskNotice }}
           </p>
-          <ul v-if="report.limitations.length">
+          <ul v-else-if="report.limitations.length">
             <li v-for="item in report.limitations" :key="item">
               {{ item }}
             </li>
@@ -512,7 +465,7 @@ h1 {
 .status-grid {
   display: grid;
   margin-top: 18px;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 14px;
 }
 
@@ -570,41 +523,6 @@ h2 {
   line-height: 1.85;
 }
 
-.quality-grid,
-.two-column {
-  display: grid;
-  grid-template-columns: 1.4fr 1fr;
-  gap: 24px;
-}
-
-.quality-grid dl {
-  display: grid;
-  margin: 0;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-}
-
-.quality-title { margin: 0 0 10px; color: #526579; font-size: 14px; }
-.kpi-grid { display: grid; margin-top: 14px; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
-.kpi-grid article { padding: 11px; background: #eef6fb; border-radius: 9px; }
-.kpi-grid span, .kpi-grid small { display: block; color: #718095; font-size: 12px; }
-.kpi-grid strong { display: block; margin: 5px 0 2px; color: #233c55; font-size: 18px; }
-
-.quality-grid dl > div {
-  padding: 15px;
-  background: #f7f9fc;
-  border-radius: 10px;
-}
-
-dt { color: #78889b; font-size: 13px; }
-dd { margin: 5px 0 0; color: #233c55; font-size: 20px; font-weight: 700; }
-
-.completeness-panel {
-  display: flex;
-  align-items: center;
-  flex-direction: column;
-}
-
 .chart-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -626,8 +544,7 @@ th, td { padding: 11px 10px; text-align: left; border-bottom: 1px solid #e7ecf2;
 th { color: #526579; font-weight: 600; background: #f5f8fb; }
 
 ul, ol { padding-left: 22px; line-height: 1.8; }
-.empty-copy, .source-digest { color: #7b8999; }
-.source-digest { margin-top: 16px; font-size: 12px; overflow-wrap: anywhere; }
+.empty-copy { color: #7b8999; }
 
 .model-narrative {
   padding: 14px 16px;
@@ -640,7 +557,11 @@ ul, ol { padding-left: 22px; line-height: 1.8; }
 .model-narrative strong { color: #36546d; font-size: 13px; }
 .model-narrative p { margin: 8px 0 0; line-height: 1.75; white-space: pre-wrap; }
 .narrative-copy { margin: 0; line-height: 1.8; white-space: pre-wrap; }
-.recommendation-basis { display: block; margin-top: 4px; color: #718095; }
+.recommendation-list { padding: 0; list-style: none; }
+.recommendation-list > li + li { margin-top: 16px; }
+.recommendation-title { display: flex; align-items: center; gap: 8px; }
+.priority-tag { padding: 1px 7px; color: #8b5c10; font-size: 12px; font-weight: 700; background: #fff5df; border-radius: 999px; }
+.recommendation-steps { margin: 7px 0 0; }
 
 .evidence-list { padding: 0; list-style: none; }
 .evidence-list li { padding: 13px 0; border-bottom: 1px solid #edf0f4; }
@@ -654,8 +575,6 @@ ul, ol { padding-left: 22px; line-height: 1.8; }
   .report-header { padding: 26px 22px; flex-direction: column; }
   .status-grid, .chart-grid { grid-template-columns: 1fr; }
   .status-grid { grid-template-columns: repeat(2, 1fr); }
-  .quality-grid, .two-column { grid-template-columns: 1fr; }
-  .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 </style>
 
@@ -687,7 +606,7 @@ ul, ol { padding-left: 22px; line-height: 1.8; }
     flex-direction: row !important;
   }
   .status-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
     gap: 8px !important;
   }
   .status-grid article {
@@ -695,11 +614,6 @@ ul, ol { padding-left: 22px; line-height: 1.8; }
     padding: 10px 12px !important;
   }
   .status-grid strong { font-size: 20px !important; }
-  .quality-grid {
-    grid-template-columns: 1.4fr 1fr !important;
-    gap: 16px !important;
-  }
-  .kpi-grid { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
   .report-section {
     padding: 14px 16px !important;
     margin-top: 8px !important;
@@ -707,7 +621,7 @@ ul, ol { padding-left: 22px; line-height: 1.8; }
     page-break-inside: auto;
   }
   .report-header, .status-grid, .status-grid article, tr, .trend-chart, .model-narrative,
-  .operating-findings, .evidence-list li, .recommendation-basis, .el-timeline-item {
+  .operating-findings, .evidence-list li, .recommendation-list > li, .el-timeline-item {
     break-inside: avoid;
     page-break-inside: avoid;
   }
@@ -723,7 +637,6 @@ ul, ol { padding-left: 22px; line-height: 1.8; }
   tr { break-inside: avoid; page-break-inside: avoid; }
   .table-wrap { overflow: visible !important; }
   th, td { padding: 7px 6px !important; }
-  .two-column { grid-template-columns: 1fr !important; }
 }
 
 html.report-print-layout .report-page {
@@ -738,10 +651,8 @@ html.report-print-layout .report-sheet {
 
 html.report-print-layout .no-print { display: none !important; }
 html.report-print-layout .report-header { padding: 16px 18px !important; flex-direction: row !important; }
-html.report-print-layout .status-grid { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; gap: 8px !important; }
+html.report-print-layout .status-grid { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; gap: 8px !important; }
 html.report-print-layout .status-grid article { min-height: 0 !important; padding: 10px 12px !important; }
-html.report-print-layout .quality-grid { grid-template-columns: 1.4fr 1fr !important; gap: 16px !important; }
-html.report-print-layout .kpi-grid { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
 html.report-print-layout .chart-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 10px !important; }
 html.report-print-layout .report-section { padding: 14px 16px !important; margin-top: 8px !important; }
 html.report-print-layout .trend-chart { padding: 10px !important; }

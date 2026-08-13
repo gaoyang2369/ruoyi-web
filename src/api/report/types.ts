@@ -15,6 +15,7 @@ export interface ReportAttachment {
 
 export interface ReportMetric {
   metricName: string;
+  displayName?: string | null;
   current: number | null;
   average: number | null;
   minimum: number | null;
@@ -31,6 +32,7 @@ export interface ReportTrendPoint {
 
 export interface ReportTrend {
   metricName: string;
+  displayName?: string | null;
   points: ReportTrendPoint[];
 }
 
@@ -107,7 +109,7 @@ export interface OperationReportResult {
       sourceDocuments: string[];
     }>;
   };
-  recommendations: Array<{ content: string; source: string }>;
+  recommendations: ReportRecommendation[];
   evidence: Array<{
     evidenceId: number | null;
     evidenceCode: string | null;
@@ -124,12 +126,19 @@ export interface ReportNarrative {
   executiveSummary: string | null;
   operatingFindings: string[];
   anomalyAnalysis: string[];
-  recommendations: Array<{
-    priority: 'P1' | 'P2' | 'P3';
-    action: string;
-    basis: string[];
-  }>;
+  recommendations: ReportRecommendation[];
   riskNotice: string | null;
+}
+
+export interface ReportRecommendation {
+  priority?: 'P1' | 'P2' | 'P3' | null;
+  action?: string | null;
+  steps?: string[];
+  // Kept for internal consumers; it is intentionally not rendered in the report.
+  basis?: string[];
+  // Compatibility with the previous deterministic recommendation response.
+  content?: string | null;
+  source?: string | null;
 }
 
 export interface OperationReportResponse {
