@@ -84,7 +84,7 @@ function unitLabel() {
 }
 
 function renderChart() {
-  if (!chartEl.value || !selectedTrends.value.length) {
+  if (!chartEl.value || !selectedTrends.value.length || chartEl.value.clientWidth <= 0 || chartEl.value.clientHeight <= 0) {
     return;
   }
   chart ||= echarts.init(chartEl.value);
@@ -92,18 +92,41 @@ function renderChart() {
   requestAnimationFrame(() => chart?.resize());
 }
 
+function resizeAfterPrintLayout() {
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (chartEl.value && chartEl.value.clientWidth > 0 && chartEl.value.clientHeight > 0)
+      chart?.resize();
+  }));
+}
+
+function beforePrint() {
+  // Some browsers dispatch beforeprint before their @media print reflow. Apply the
+  // same chart size marker first, then resize on the settled layout.
+  document.documentElement.classList.add('report-printing');
+  resizeAfterPrintLayout();
+}
+
+function afterPrint() {
+  document.documentElement.classList.remove('report-printing');
+  resizeAfterPrintLayout();
+}
+
 onMounted(() => {
   renderChart();
   if (chartEl.value) {
-    resizeObserver = new ResizeObserver(() => chart?.resize());
+    resizeObserver = new ResizeObserver(resizeAfterPrintLayout);
     resizeObserver.observe(chartEl.value);
   }
+  window.addEventListener('beforeprint', beforePrint);
+  window.addEventListener('afterprint', afterPrint);
 });
 
 watch(() => [props.metricNames, props.trends, props.events, props.metricUnits], renderChart, { deep: true });
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
+  window.removeEventListener('beforeprint', beforePrint);
+  window.removeEventListener('afterprint', afterPrint);
   chart?.dispose();
 });
 </script>
@@ -132,5 +155,23 @@ h3 {
 .trend-chart-canvas {
   width: 100%;
   height: 320px;
+}
+
+@media print {
+  .trend-chart {
+    padding: 10px !important;
+  }
+
+  .trend-chart-canvas {
+    height: 200px !important;
+  }
+}
+
+:global(html.report-printing .trend-chart) {
+  padding: 10px !important;
+}
+
+:global(html.report-printing .trend-chart-canvas) {
+  height: 200px !important;
 }
 </style>

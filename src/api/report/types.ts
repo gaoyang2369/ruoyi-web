@@ -122,12 +122,12 @@ export interface OperationReportResult {
 
 export interface ReportNarrative {
   executiveSummary: string | null;
-  operatingFindings: string | null;
-  anomalyAnalysis: string | null;
+  operatingFindings: string[];
+  anomalyAnalysis: string[];
   recommendations: Array<{
     priority: 'P1' | 'P2' | 'P3';
     action: string;
-    basis: string;
+    basis: string[];
   }>;
   riskNotice: string | null;
 }
