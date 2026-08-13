@@ -62,8 +62,7 @@ export const useChatStore = defineStore('chat', () => {
       const isUser = item.role === 'user';
       const originalContent = item.content as string;
 
-      const thinkContent = extractThkContent(originalContent);
-      const afterThinkContent = extractThkContentAfter(originalContent);
+      const visibleContent = stripInternalThinking(originalContent);
 
       const result = {
         ...item,
@@ -76,10 +75,7 @@ export const useChatStore = defineStore('chat', () => {
           : 'https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png',
         avatarSize: '32px',
         typing: false,
-        reasoning_content: thinkContent,
-        thinkingStatus: 'end',
-        content: afterThinkContent,
-        thinlCollapse: false,
+        content: visibleContent,
         noStyle: !isUser,
       };
 
@@ -106,28 +102,15 @@ export const useChatStore = defineStore('chat', () => {
     }
   };
 
-  // 对思考中的内容回显做处理
-  function extractThkContent(content: string) {
-    const regex = /<think>(.*?)<\/think>/s;
-    const matchResult = content.match(regex);
-    return matchResult?.[1] ?? '';
-  }
-
-  // 如果有 </think> 标签，则把 </think> 之后的 内容从 content 中返回
-  function extractThkContentAfter(content: string) {
-    if (!content.includes('</think>')) {
-      return content;
+  // 历史记录只用于回显最终回答；旧数据中残留的内部思考不得进入正文或复制内容。
+  function stripInternalThinking(content: string) {
+    const closeTag = '</think>';
+    const lastClose = content.lastIndexOf(closeTag);
+    if (lastClose >= 0) {
+      return content.substring(lastClose + closeTag.length);
     }
-
-    // 查找 </think> 的位置
-    const thinkEndIdx = content.indexOf('</think>');
-    if (thinkEndIdx === -1) {
-      return content;
-    }
-
-    // 直接截取 </think> 之后的所有内容
-    const afterThink = content.substring(thinkEndIdx + 8); // 8 是 '</think>' 的长度
-    return afterThink;
+    const openTag = content.indexOf('<think>');
+    return openTag >= 0 ? content.substring(0, openTag) : content;
   }
 
   return {

@@ -17,6 +17,12 @@ const friendlyToolName = computed(() => {
     queryTrend: '运行趋势分析',
     search_manual: '故障知识检索',
     searchManual: '故障知识检索',
+    query_device_status: '设备状态查询',
+    lookup_fault_code: '故障码查询',
+    query_telemetry_statistics: '遥测统计查询',
+    query_telemetry_series: '遥测趋势查询',
+    diagnose_device: '设备故障诊断',
+    generate_operation_report: '运行报告生成',
   };
   const name = props.toolInfo.name || '';
   return names[name] || name.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ') || '分析工具';

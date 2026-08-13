@@ -4,6 +4,7 @@ export interface AgentVO {
   agentName?: string;
   agentDescribe?: string;
   agentShow?: string;
+  scenarioCode?: string;
   modelId?: number;
   modelName?: string;
   enableThinking?: string;

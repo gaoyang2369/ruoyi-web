@@ -3,7 +3,6 @@
 import type { AnyObject } from 'typescript-api-pro';
 import type { BubbleProps } from 'vue-element-plus-x/types/Bubble';
 import type { BubbleListInstance } from 'vue-element-plus-x/types/BubbleList';
-import type { ThinkingStatus } from 'vue-element-plus-x/types/Thinking';
 import type { ChatSyncEvent, ToolCallInfo, VoiceStatus, WfNodeEvent } from './types';
 import type { SendDTO, WfNodeInput, WfNodeInputDef } from '@/api/chat/types';
 import type { BrowserVoice } from '@/composables/useBrowserVoice';
@@ -34,9 +33,6 @@ type MessageItem = BubbleProps & {
   key: number;
   role: 'ai' | 'user' | 'system';
   avatar: string;
-  thinkingStatus?: ThinkingStatus;
-  thinlCollapse?: boolean;
-  reasoning_content?: string;
   class?: string;
   /** 工作流人机交互：渲染为输入框气泡 */
   isWorkflowFeedback?: boolean;
@@ -50,6 +46,10 @@ type MessageItem = BubbleProps & {
   source?: string;
   /** 该回复关联的工具执行进度 */
   toolCallEvents?: ToolCallInfo[];
+  /** 当前回复的轻量分析进度，仅展示给用户可理解的阶段信息。 */
+  analysisStatus?: 'analyzing' | 'querying' | 'generating' | 'completed' | 'failed' | 'cancelled';
+  analysisStartedAt?: number;
+  hasReceivedContent?: boolean;
 };
 
 const route = useRoute();
@@ -109,6 +109,8 @@ const wfNodeUuidToRuntimeUuid = ref<Record<string, string>>({});
 // 当前是否选中工作流（全局，与智能体互斥）
 const currentBinding = computed(() => chatStore.currentWorkflow);
 const hasWfNodeEvents = computed(() => wfNodeEvents.value.length > 0);
+// Hermes 故障诊断只展示结构化分析进度；不启用也不暴露“深度思考”。
+const isFaultDiagnosisAgent = computed(() => agentStore.currentAgentInfo?.scenarioCode === 'FAULT_DIAGNOSIS');
 
 // 是否有工具调用事件
 const hasToolCallEvents = computed(() => toolCallEvents.value.length > 0);
@@ -162,8 +164,8 @@ onBeforeUnmount(() => {
   disconnectChatSync();
 });
 
-// 记录进入思考中
 let isThinking = false;
+let pendingThinkTag = '';
 
 watch(
   () => route.params?.id,
@@ -399,9 +401,8 @@ function handleSyncAssistantDone(event: Record<string, any>) {
   const message = ensureVoiceAssistantMessage(getSyncRequestId(event));
   message.typing = false;
   message.loading = false;
-  if (message.thinkingStatus === 'thinking') {
-    message.thinkingStatus = 'end';
-  }
+  const status = String(event.status || '').toUpperCase();
+  finishAssistantAnalysis(message, status === 'ERROR' ? 'failed' : status === 'CANCELLED' ? 'cancelled' : 'completed');
   bubbleItems.value = [...bubbleItems.value];
   bubbleListRef.value?.scrollToBottom();
 }
@@ -431,8 +432,36 @@ function handleSyncToolProgress(event: Record<string, any>) {
     tools.push(toolInfo);
   }
   message.toolCallEvents = tools;
+  message.analysisStatus = 'querying';
   bubbleItems.value = [...bubbleItems.value];
   bubbleListRef.value?.scrollToBottom();
+}
+
+function markPendingToolsSuccess(message: MessageItem) {
+  if (!message.toolCallEvents?.length) {
+    return;
+  }
+  message.toolCallEvents = message.toolCallEvents.map(tool => tool.status === 'pending'
+    ? { ...tool, status: 'success', timestamp: Date.now() }
+    : tool);
+}
+
+function finishAssistantAnalysis(
+  message: MessageItem | undefined,
+  status: NonNullable<MessageItem['analysisStatus']>,
+) {
+  if (!message) {
+    return;
+  }
+  if (status === 'completed') {
+    markPendingToolsSuccess(message);
+  }
+  message.analysisStatus = status;
+}
+
+function finishCurrentAssistantAnalysis(status: NonNullable<MessageItem['analysisStatus']>) {
+  finishAssistantAnalysis(bubbleItems.value[bubbleItems.value.length - 1], status);
+  bubbleItems.value = [...bubbleItems.value];
 }
 
 function normalizeToolStatus(status: unknown): ToolCallInfo['status'] {
@@ -485,7 +514,7 @@ async function startSSE(chatContent: string) {
     // 添加用户输入的消息
     inputValue.value = '';
     addMessage(chatContent, true);
-    addMessage('', false);
+    addMessage('', false, { toolCallEvents: [] });
 
     // 这里有必要调用一下 BubbleList 组件的滚动到底部 手动触发 自动滚动
     bubbleListRef.value?.scrollToBottom();
@@ -502,6 +531,7 @@ async function startSSE(chatContent: string) {
       agentId: agentStore.currentAgentInfo?.id || undefined,
       content: lastUserMessage?.content ?? '',
       sessionId: route.params?.id !== 'not_login' ? String(route.params?.id) : undefined,
+      enableThinking: isFaultDiagnosisAgent.value ? false : undefined,
     };
 
     // 绑定了工作流：走工作流模式（后端 enableWorkFlow 优先级最高，会短路 agent/thinking）
@@ -537,6 +567,7 @@ async function startSSE(chatContent: string) {
   }
   catch (err) {
     handleError(err);
+    finishCurrentAssistantAnalysis('failed');
     // 出错时也要清除 loading 状态
     if (bubbleItems.value.length) {
       const lastMessage = bubbleItems.value[bubbleItems.value.length - 1];
@@ -551,12 +582,13 @@ async function startSSE(chatContent: string) {
       lastMessage.typing = false;
       // 无条件重置 loading（停止打字动画）
       lastMessage.loading = false;
-      // 重置思考状态：如果还在思考中，标记为已完成
-      if (lastMessage.thinkingStatus === 'thinking') {
-        lastMessage.thinkingStatus = 'end';
+      if (lastMessage.analysisStatus === 'analyzing'
+        || lastMessage.analysisStatus === 'querying'
+        || lastMessage.analysisStatus === 'generating') {
+        finishAssistantAnalysis(lastMessage, 'completed');
       }
-      // 重置isThinking标志
       isThinking = false;
+      pendingThinkTag = '';
       bubbleItems.value = [...bubbleItems.value];
     }
     browserVoice.resume();
@@ -601,7 +633,7 @@ async function startResumeSSE(feedbackContent: string) {
   browserVoice.pause();
   try {
     addMessage(feedbackContent, true);
-    addMessage('', false);
+    addMessage('', false, { toolCallEvents: [] });
     bubbleListRef.value?.scrollToBottom();
 
     const payload: SendDTO = {
@@ -609,6 +641,7 @@ async function startResumeSSE(feedbackContent: string) {
       agentId: agentStore.currentAgentInfo?.id || undefined,
       content: feedbackContent,
       sessionId: route.params?.id !== 'not_login' ? String(route.params?.id) : undefined,
+      enableThinking: isFaultDiagnosisAgent.value ? false : undefined,
       isResume: true,
       reSumeRunner: {
         runtimeUuid: wfRuntimeUuid,
@@ -635,16 +668,20 @@ async function startResumeSSE(feedbackContent: string) {
   }
   catch (err) {
     handleError(err);
+    finishCurrentAssistantAnalysis('failed');
   }
   finally {
     if (bubbleItems.value.length) {
       const lastMessage = bubbleItems.value[bubbleItems.value.length - 1];
       lastMessage.typing = false;
       lastMessage.loading = false;
-      if (lastMessage.thinkingStatus === 'thinking') {
-        lastMessage.thinkingStatus = 'end';
+      if (lastMessage.analysisStatus === 'analyzing'
+        || lastMessage.analysisStatus === 'querying'
+        || lastMessage.analysisStatus === 'generating') {
+        finishAssistantAnalysis(lastMessage, 'completed');
       }
       isThinking = false;
+      pendingThinkTag = '';
       bubbleItems.value = [...bubbleItems.value];
     }
     browserVoice.resume();
@@ -701,6 +738,7 @@ function handleDataChunk(chunk: AnyObject | string): boolean {
 
       if (eventType === 'done' || dataObj?.done === true) {
         console.log('[SSE] 流结束');
+        finishCurrentAssistantAnalysis('completed');
         return true;
       }
 
@@ -708,10 +746,11 @@ function handleDataChunk(chunk: AnyObject | string): boolean {
       if (eventType === 'error' || dataObj?.event === 'error') {
         const error = dataObj?.error || dataObj?.message || '请求处理失败，请稍后重试';
         handleContentChunk(`请求未能完成：${error}`);
+        finishCurrentAssistantAnalysis('failed');
         return true;
       }
 
-      if (eventType === 'mcp' && dataObj) {
+      if ((eventType === 'mcp' || eventType === 'mcp_tool') && dataObj) {
         handleMcpEvent(dataObj);
         return false;
       }
@@ -721,32 +760,9 @@ function handleDataChunk(chunk: AnyObject | string): boolean {
         if (content) {
           handleContentChunk(content);
         }
-        const reasoningContent = dataObj.reasoning_content || '';
-        if (reasoningContent) {
-          const lastMessage = bubbleItems.value[bubbleItems.value.length - 1];
-          if (lastMessage) {
-            lastMessage.thinkingStatus = 'thinking';
-            lastMessage.loading = true;
-            lastMessage.thinlCollapse = true;
-            lastMessage.reasoning_content += reasoningContent;
-            bubbleItems.value = [...bubbleItems.value];
-          }
-        }
       }
     }
     else if (typeof chunk === 'object' && chunk !== null) {
-      const reasoningChunk = chunk?.choices?.[0]?.delta?.reasoning_content;
-      if (reasoningChunk) {
-        const lastMessage = bubbleItems.value[bubbleItems.value.length - 1];
-        if (lastMessage) {
-          lastMessage.thinkingStatus = 'thinking';
-          lastMessage.loading = true;
-          lastMessage.thinlCollapse = true;
-          lastMessage.reasoning_content += reasoningChunk;
-          bubbleItems.value = [...bubbleItems.value];
-        }
-      }
-
       const parsedChunk = chunk?.choices?.[0]?.delta?.content;
       if (parsedChunk) {
         handleContentChunk(parsedChunk);
@@ -915,51 +931,42 @@ function handleMcpEvent(dataObj: AnyObject) {
   console.log('[SSE] MCP 事件:', dataObj);
 
   try {
-    const content = typeof dataObj.content === 'string'
+    const parsedContent = typeof dataObj.content === 'string'
       ? JSON.parse(dataObj.content)
-      : dataObj.content;
-
-    const toolName = content.name || 'Unknown Tool';
-    const toolStatus = content.status || 'pending';
-    const toolResult = content.result || null;
-
-    if (toolStatus === 'pending') {
-      const toolInfo: ToolCallInfo = {
-        key: ++toolCallKeyCounter,
-        name: toolName,
-        status: 'pending',
-        result: null,
-        timestamp: Date.now(),
-      };
-      toolCallEvents.value = [...toolCallEvents.value, toolInfo];
+      : (dataObj.content || dataObj);
+    const content = parsedContent?.tool && typeof parsedContent.tool === 'object'
+      ? { ...parsedContent, ...parsedContent.tool }
+      : parsedContent;
+    const toolName = String(content?.toolName || content?.name
+      || (typeof content?.tool === 'string' ? content.tool : '') || 'Hermes 工具');
+    const toolId = content?.id || content?.toolId || content?.tool_id;
+    const toolStatus = normalizeToolStatus(content?.status || content?.state || 'pending');
+    const toolResult = content?.result ?? null;
+    const message = bubbleItems.value[bubbleItems.value.length - 1];
+    if (!message || message.role !== 'system') {
+      return;
+    }
+    const tools = message.toolCallEvents ? [...message.toolCallEvents] : [];
+    const index = tools.findIndex(tool => (toolId && tool.id === toolId)
+      || (!toolId && tool.name === toolName && tool.status === 'pending'));
+    const toolInfo: ToolCallInfo = {
+      key: index >= 0 ? tools[index].key : ++toolCallKeyCounter,
+      id: toolId ? String(toolId) : undefined,
+      name: toolName,
+      status: toolStatus,
+      result: toolResult,
+      timestamp: Date.now(),
+    };
+    if (index >= 0) {
+      tools[index] = { ...tools[index], ...toolInfo };
     }
     else {
-      const index = toolCallEvents.value.findIndex(
-        t => t.name === toolName && t.status === 'pending',
-      );
-      if (index >= 0) {
-        const updatedEvents = [...toolCallEvents.value];
-        updatedEvents[index] = {
-          ...updatedEvents[index],
-          status: toolStatus,
-          result: toolResult,
-          timestamp: Date.now(),
-        };
-        toolCallEvents.value = updatedEvents;
-      }
-      else {
-        const toolInfo: ToolCallInfo = {
-          key: ++toolCallKeyCounter,
-          name: toolName,
-          status: toolStatus,
-          result: toolResult,
-          timestamp: Date.now(),
-        };
-        toolCallEvents.value = [...toolCallEvents.value, toolInfo];
-      }
+      tools.push(toolInfo);
     }
-
-    console.log('[SSE] 工具调用列表:', toolCallEvents.value);
+    message.toolCallEvents = tools;
+    message.analysisStatus = 'querying';
+    bubbleItems.value = [...bubbleItems.value];
+    bubbleListRef.value?.scrollToBottom();
   }
   catch (err) {
     console.error('[SSE] MCP 事件解析失败:', err);
@@ -973,39 +980,13 @@ function handleContentChunk(content: string) {
     return;
   }
 
-  let currentText = content;
-
-  if (!isThinking && currentText.includes('<think')) {
-    const thinkIdx = currentText.indexOf('<think');
-    if (thinkIdx > 0) {
-      const beforeThink = currentText.substring(0, thinkIdx);
-      lastMessage.content += beforeThink;
-    }
-    currentText = currentText.substring(thinkIdx + 7);
-    isThinking = true;
-    lastMessage.thinkingStatus = 'thinking';
-    lastMessage.loading = true;
-    lastMessage.thinlCollapse = true;
-  }
-
-  if (isThinking && currentText.includes('</think')) {
-    const thinkEndIdx = currentText.indexOf('</think');
-    if (thinkEndIdx > 0) {
-      const thinkContent = currentText.substring(0, thinkEndIdx);
-      lastMessage.reasoning_content += thinkContent;
-    }
-    currentText = currentText.substring(thinkEndIdx + 8);
-    isThinking = false;
-    lastMessage.thinkingStatus = 'end';
-    lastMessage.loading = false;
-  }
-
+  const currentText = filterThinkContent(content);
   if (currentText) {
-    if (isThinking) {
-      lastMessage.reasoning_content += currentText;
-    }
-    else {
-      lastMessage.content += currentText;
+    lastMessage.content += currentText;
+    if (!lastMessage.hasReceivedContent) {
+      lastMessage.hasReceivedContent = true;
+      markPendingToolsSuccess(lastMessage);
+      lastMessage.analysisStatus = 'generating';
     }
   }
 
@@ -1013,10 +994,49 @@ function handleContentChunk(content: string) {
   bubbleListRef.value?.scrollToBottom();
 }
 
+function filterThinkContent(content: string): string {
+  const openTag = '<think>';
+  const closeTag = '</think>';
+  let value = pendingThinkTag + content;
+  pendingThinkTag = '';
+  let visible = '';
+  while (value) {
+    const tag = isThinking ? closeTag : openTag;
+    const index = value.indexOf(tag);
+    if (index >= 0) {
+      if (!isThinking) {
+        visible += value.substring(0, index);
+      }
+      isThinking = !isThinking;
+      value = value.substring(index + tag.length);
+      continue;
+    }
+    const maxPrefix = Math.min(value.length, tag.length - 1);
+    let prefixLength = 0;
+    for (let length = maxPrefix; length > 0; length--) {
+      if (value.endsWith(tag.substring(0, length))) {
+        prefixLength = length;
+        break;
+      }
+    }
+    const stable = value.substring(0, value.length - prefixLength);
+    if (!isThinking) {
+      visible += stable;
+    }
+    pendingThinkTag = value.substring(value.length - prefixLength);
+    break;
+  }
+  return visible;
+}
+
 async function cancelSSE() {
   cancel();
   if (bubbleItems.value.length) {
-    bubbleItems.value[bubbleItems.value.length - 1].typing = false;
+    const lastMessage = bubbleItems.value[bubbleItems.value.length - 1];
+    lastMessage.typing = false;
+    lastMessage.loading = false;
+    finishAssistantAnalysis(lastMessage, 'cancelled');
+    bubbleItems.value = [...bubbleItems.value];
   }
   browserVoice.resume();
 }
@@ -1054,16 +1074,18 @@ function addMessage(
     isMarkdown: !isUser,
     loading: !isUser,
     content: message || '',
-    reasoning_content: '',
-    thinkingStatus: 'start',
-    thinlCollapse: false,
     noStyle: !isUser,
+    ...(!isUser
+      ? {
+          analysisStatus: 'analyzing' as const,
+          analysisStartedAt: Date.now(),
+          hasReceivedContent: false,
+        }
+      : {}),
     ...options,
   };
   bubbleItems.value.push(obj);
 }
-
-function handleChange(_payload: { value: boolean; status: ThinkingStatus }) {}
 
 function startEditing(item: MessageItem) {
   if (!editingMessageKeys.value.includes(item.key)) {
@@ -1115,17 +1137,13 @@ function sendMessageByKey(key: number) {
 
       <BubbleList ref="bubbleListRef" :list="bubbleItems" max-height="calc(100vh - 240px)">
         <template #header="{ item }">
-          <div v-if="item.toolCallEvents?.length" class="assistant-tool-events">
-            <ToolCallGroup :tools="item.toolCallEvents" />
+          <div v-if="item.analysisStatus || item.toolCallEvents?.length" class="assistant-tool-events">
+            <ToolCallGroup
+              :tools="item.toolCallEvents || []"
+              :analysis-status="item.analysisStatus"
+              :analysis-started-at="item.analysisStartedAt"
+            />
           </div>
-          <Thinking
-            v-if="item.reasoning_content"
-            v-model="item.thinlCollapse"
-            :content="item.reasoning_content"
-            :status="item.thinkingStatus"
-            class="thinking-chain-warp"
-            @change="handleChange"
-          />
         </template>
 
         <template #content="{ item }">

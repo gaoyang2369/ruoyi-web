@@ -4,6 +4,8 @@ import ToolCallCard from './ToolCallCard.vue';
 
 const props = defineProps<{
   tools: ToolCallInfo[];
+  analysisStatus?: 'analyzing' | 'querying' | 'generating' | 'completed' | 'failed' | 'cancelled';
+  analysisStartedAt?: number;
 }>();
 
 const isExpanded = ref(false);
@@ -11,8 +13,31 @@ const pendingCount = computed(() => props.tools.filter(tool => tool.status === '
 const successCount = computed(() => props.tools.filter(tool => tool.status === 'success').length);
 const errorCount = computed(() => props.tools.filter(tool => tool.status === 'error').length);
 const isFinished = computed(() => pendingCount.value === 0);
+function friendlyToolName(name?: string) {
+  const names: Record<string, string> = {
+    query_device_status: '设备状态查询',
+    lookup_fault_code: '故障码查询',
+    query_telemetry_statistics: '遥测统计查询',
+    query_telemetry_series: '遥测趋势查询',
+    diagnose_device: '设备故障诊断',
+    generate_operation_report: '运行报告生成',
+  };
+  return names[name || ''] || name || '分析工具';
+}
+const elapsedSeconds = computed(() => props.analysisStartedAt
+  ? Math.max(1, Math.ceil((Date.now() - props.analysisStartedAt) / 1000))
+  : 0);
+const latestToolName = computed(() => friendlyToolName(props.tools[props.tools.length - 1]?.name));
 
 const summaryText = computed(() => {
+  switch (props.analysisStatus) {
+    case 'analyzing': return '正在分析问题';
+    case 'querying': return `正在执行${latestToolName.value}`;
+    case 'generating': return '数据查询完成，正在生成回答';
+    case 'completed': return `分析完成 · 用时 ${elapsedSeconds.value} 秒 · 调用 ${props.tools.length} 项工具`;
+    case 'failed': return `分析失败 · 用时 ${elapsedSeconds.value} 秒`;
+    case 'cancelled': return `分析已取消 · 用时 ${elapsedSeconds.value} 秒`;
+  }
   if (!isFinished.value) {
     return `正在分析 · 使用 ${props.tools.length} 项工具`;
   }
