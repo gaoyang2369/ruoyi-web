@@ -41,6 +41,9 @@ const senderValue = computed({
 const senderRef = ref<InstanceType<typeof Sender> | null>(null);
 
 const voiceWakeText = computed(() => {
+  if (props.voiceStatus === 'ERROR') {
+    return '语音不可用';
+  }
   if (!props.voiceEnabled || props.voiceStatus === 'OFF') {
     return '语音唤醒';
   }
@@ -51,8 +54,6 @@ const voiceWakeText = computed(() => {
       return '正在聆听';
     case 'THINKING':
       return '正在分析';
-    case 'ERROR':
-      return '语音不可用';
     default:
       return '语音唤醒';
   }

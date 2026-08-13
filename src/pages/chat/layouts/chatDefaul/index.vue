@@ -1,15 +1,30 @@
 <!-- 默认消息列表页 -->
 <script setup lang="ts">
+import type { BrowserVoice } from '@/composables/useBrowserVoice';
 import { ref } from 'vue';
 import ChatSender from '@/components/ChatSender/index.vue';
 import WelecomeText from '@/components/WelecomeText/index.vue';
 import { useUserStore } from '@/stores';
 import { useSessionStore } from '@/stores/modules/session';
 
+const props = defineProps<{
+  voice: BrowserVoice;
+}>();
+
+const emit = defineEmits<{
+  toggleVoiceWake: [];
+}>();
+
 const userStore = useUserStore();
 const sessionStore = useSessionStore();
 
 const senderValue = ref('');
+
+const removeVoiceCommand = props.voice.onCommand((text) => {
+  void handleVoiceCommand(text);
+});
+
+onBeforeUnmount(removeVoiceCommand);
 
 const quickPrompts = [
   {
@@ -62,6 +77,15 @@ async function handleSubmit(content: string) {
   });
 }
 
+async function handleVoiceCommand(content: string) {
+  if (!userStore.token) {
+    userStore.ensureLogin('/chat', '登录后即可开始对话');
+    props.voice.resume();
+    return;
+  }
+  await handleSubmit(content);
+}
+
 function handleQuickPrompt(content: string) {
   handleSubmit(content);
 }
@@ -104,7 +128,12 @@ function handleQuickPrompt(content: string) {
     <ChatSender
       v-model="senderValue"
       placeholder="描述设备问题、告警信息或你想查询的内容…"
+      show-voice-wake
+      :voice-enabled="voice.enabled.value"
+      :voice-status="voice.status.value"
+      :voice-supported="voice.supported.value"
       @submit="handleSubmit"
+      @toggle-voice-wake="emit('toggleVoiceWake')"
     />
     <p class="input-tip">
       AI 建议仅供参考，请结合现场工况和操作规范确认。

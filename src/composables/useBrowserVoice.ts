@@ -18,6 +18,8 @@ interface BrowserSpeechRecognition {
   lang: string;
   onstart: (() => void) | null;
   onend: (() => void) | null;
+  onspeechstart: (() => void) | null;
+  onspeechend: (() => void) | null;
   onerror: ((event: { error: string; message?: string }) => void) | null;
   onresult: ((event: RecognitionResultEvent) => void) | null;
   start: () => void;
@@ -27,7 +29,9 @@ interface BrowserSpeechRecognition {
 type SpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
 
 const WAKE_WORD = '小智同学';
-const COMMAND_TIMEOUT = 8000;
+const COMMAND_START_TIMEOUT = 15000;
+const RECOVERABLE_ERRORS = new Set(['aborted', 'no-speech']);
+const UNRECOVERABLE_ERRORS = new Set(['audio-capture', 'not-allowed', 'service-not-allowed']);
 
 function getRecognitionConstructor(): SpeechRecognitionConstructor | undefined {
   if (typeof window === 'undefined') {
@@ -40,13 +44,22 @@ function getRecognitionConstructor(): SpeechRecognitionConstructor | undefined {
   return browserWindow.SpeechRecognition || browserWindow.webkitSpeechRecognition;
 }
 
+/** Only correct known wake-word and equipment-code recognition variants. */
+function correctKnownTerms(text: string): string {
+  return text
+    .replace(/小[志知]同学/g, WAKE_WORD)
+    .replace(/g(?:一二零|幺二零)/gi, 'G120')
+    .replace(/a零七零八九/gi, 'A07089')
+    .replace(/f三零八九九/gi, 'F30899');
+}
+
 function normalizeText(text: string): string {
-  return text.replace(/[\s，。！？、；：,.!?;:]/g, '');
+  return correctKnownTerms(text).replace(/[\s，。！？、；：,.!?;:]/g, '');
 }
 
 /**
- * Browser-native wake-word recognition. It intentionally only handles the
- * microphone lifecycle and emits a completed command to the Chat page.
+ * Browser-native wake-word recognition. It manages only microphone state and
+ * emits completed commands; the Chat page owns how commands are sent.
  */
 export function useBrowserVoice() {
   const enabled = ref(false);
@@ -55,106 +68,169 @@ export function useBrowserVoice() {
   const errorMessage = ref('');
 
   let recognition: BrowserSpeechRecognition | null = null;
-  let recognitionStarted = false;
+  let startPending = false;
+  let running = false;
   let shouldListen = false;
-  let commandTimer: number | undefined;
+  let commandStartTimer: number | undefined;
+  let restartTimer: number | undefined;
   let commandHandler: ((text: string) => void) | undefined;
 
-  function clearCommandTimer() {
-    if (commandTimer !== undefined) {
-      window.clearTimeout(commandTimer);
-      commandTimer = undefined;
+  function clearCommandStartTimer() {
+    if (commandStartTimer !== undefined) {
+      window.clearTimeout(commandStartTimer);
+      commandStartTimer = undefined;
     }
   }
 
+  function clearRestartTimer() {
+    if (restartTimer !== undefined) {
+      window.clearTimeout(restartTimer);
+      restartTimer = undefined;
+    }
+  }
+
+  function canListen() {
+    return enabled.value && shouldListen && status.value !== 'THINKING' && !document.hidden;
+  }
+
+  function scheduleRestart() {
+    if (!canListen() || restartTimer !== undefined) {
+      return;
+    }
+    restartTimer = window.setTimeout(() => {
+      restartTimer = undefined;
+      startRecognition();
+    }, 150);
+  }
+
   function stopRecognition() {
-    if (!recognitionStarted || !recognition) {
+    clearRestartTimer();
+    if (!recognition || (!running && !startPending)) {
       return;
     }
     try {
       recognition.stop();
     }
     catch {
-      // A recognition instance may already have stopped before its onend event.
+      // The browser may already be ending this recognition session.
     }
   }
 
+  function createRecognition() {
+    const Recognition = getRecognitionConstructor();
+    if (!Recognition) {
+      enabled.value = false;
+      status.value = 'ERROR';
+      errorMessage.value = '当前浏览器不支持语音识别';
+      return;
+    }
+
+    recognition = new Recognition();
+    recognition.lang = 'zh-CN';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.onstart = () => {
+      startPending = false;
+      running = true;
+    };
+    recognition.onend = () => {
+      startPending = false;
+      running = false;
+      scheduleRestart();
+    };
+    recognition.onspeechstart = () => {
+      if (status.value === 'LISTENING_COMMAND') {
+        clearCommandStartTimer();
+      }
+    };
+    recognition.onspeechend = () => {
+      // Command dispatch remains final-result based, so interim text is never sent.
+    };
+    recognition.onerror = (event) => {
+      if (RECOVERABLE_ERRORS.has(event.error)) {
+        return;
+      }
+      if (UNRECOVERABLE_ERRORS.has(event.error)) {
+        enabled.value = false;
+        shouldListen = false;
+        clearCommandStartTimer();
+        clearRestartTimer();
+        status.value = 'ERROR';
+        errorMessage.value = event.message || `语音识别不可用：${event.error}`;
+        return;
+      }
+      // Other browser-recognition errors are retried from onend.
+      errorMessage.value = event.message || `语音识别暂时不可用：${event.error}`;
+    };
+    recognition.onresult = (event) => {
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const result = event.results[index];
+        const text = result[0]?.transcript || '';
+        if (result.isFinal) {
+          handleFinalText(text);
+        }
+        else {
+          handleInterimText(text);
+        }
+      }
+    };
+  }
+
   function startRecognition() {
-    if (!enabled.value || !shouldListen || status.value === 'THINKING' || document.hidden) {
+    if (!canListen() || running || startPending) {
       return;
     }
     if (!recognition) {
-      const Recognition = getRecognitionConstructor();
-      if (!Recognition) {
-        enabled.value = false;
-        status.value = 'ERROR';
-        errorMessage.value = '当前浏览器不支持语音识别';
-        return;
-      }
-      recognition = new Recognition();
-      recognition.lang = 'zh-CN';
-      recognition.continuous = true;
-      recognition.interimResults = false;
-      recognition.onstart = () => {
-        recognitionStarted = true;
-      };
-      recognition.onend = () => {
-        recognitionStarted = false;
-        if (enabled.value && shouldListen && status.value !== 'THINKING') {
-          window.setTimeout(startRecognition, 150);
-        }
-      };
-      recognition.onerror = (event) => {
-        if (event.error === 'aborted' || event.error === 'no-speech') {
-          return;
-        }
-        shouldListen = false;
-        enabled.value = false;
-        clearCommandTimer();
-        status.value = 'ERROR';
-        errorMessage.value = event.message || `语音识别不可用：${event.error}`;
-      };
-      recognition.onresult = (event) => {
-        for (let index = event.resultIndex; index < event.results.length; index += 1) {
-          const result = event.results[index];
-          if (result.isFinal) {
-            handleRecognizedText(result[0]?.transcript || '');
-          }
-        }
-      };
+      createRecognition();
     }
-    if (recognitionStarted) {
+    if (!recognition || !canListen() || running || startPending) {
       return;
     }
+
     try {
-      // Mark it started before start() so repeated resume/onend calls do not throw InvalidStateError.
-      recognitionStarted = true;
+      startPending = true;
       recognition.start();
     }
     catch {
-      recognitionStarted = false;
+      startPending = false;
+      scheduleRestart();
     }
   }
 
   function waitForCommand() {
     status.value = 'LISTENING_COMMAND';
-    clearCommandTimer();
-    commandTimer = window.setTimeout(() => {
+    clearCommandStartTimer();
+    commandStartTimer = window.setTimeout(() => {
       if (enabled.value && status.value === 'LISTENING_COMMAND') {
         status.value = 'WAITING_WAKE';
       }
-    }, COMMAND_TIMEOUT);
+    }, COMMAND_START_TIMEOUT);
   }
 
   function emitCommand(command: string) {
-    clearCommandTimer();
+    clearCommandStartTimer();
     shouldListen = false;
     status.value = 'THINKING';
     stopRecognition();
     commandHandler?.(command);
   }
 
-  function handleRecognizedText(text: string) {
+  function extractWakeCommand(text: string): string | undefined {
+    const wakeWordIndex = text.indexOf(WAKE_WORD);
+    return wakeWordIndex >= 0 ? text.slice(wakeWordIndex + WAKE_WORD.length) : undefined;
+  }
+
+  function handleInterimText(text: string) {
+    if (!enabled.value || status.value !== 'WAITING_WAKE') {
+      return;
+    }
+    if (extractWakeCommand(normalizeText(text)) !== undefined) {
+      // Wake early for UI responsiveness; only final recognition can submit a command.
+      waitForCommand();
+    }
+  }
+
+  function handleFinalText(text: string) {
     if (!enabled.value || status.value === 'THINKING') {
       return;
     }
@@ -162,15 +238,14 @@ export function useBrowserVoice() {
     if (!normalized) {
       return;
     }
+    const wakeCommand = extractWakeCommand(normalized);
 
-    const wakeWordIndex = normalized.indexOf(WAKE_WORD);
     if (status.value === 'WAITING_WAKE') {
-      if (wakeWordIndex < 0) {
+      if (wakeCommand === undefined) {
         return;
       }
-      const command = normalized.slice(wakeWordIndex + WAKE_WORD.length);
-      if (command) {
-        emitCommand(command);
+      if (wakeCommand) {
+        emitCommand(wakeCommand);
       }
       else {
         waitForCommand();
@@ -179,10 +254,9 @@ export function useBrowserVoice() {
     }
 
     if (status.value === 'LISTENING_COMMAND') {
-      if (wakeWordIndex >= 0) {
-        const command = normalized.slice(wakeWordIndex + WAKE_WORD.length);
-        if (command) {
-          emitCommand(command);
+      if (wakeCommand !== undefined) {
+        if (wakeCommand) {
+          emitCommand(wakeCommand);
         }
         else {
           waitForCommand();
@@ -209,7 +283,7 @@ export function useBrowserVoice() {
   function disable() {
     enabled.value = false;
     shouldListen = false;
-    clearCommandTimer();
+    clearCommandStartTimer();
     status.value = 'OFF';
     stopRecognition();
   }
@@ -219,7 +293,7 @@ export function useBrowserVoice() {
       return;
     }
     shouldListen = false;
-    clearCommandTimer();
+    clearCommandStartTimer();
     status.value = 'THINKING';
     stopRecognition();
   }
@@ -229,7 +303,7 @@ export function useBrowserVoice() {
       return;
     }
     shouldListen = true;
-    clearCommandTimer();
+    clearCommandStartTimer();
     status.value = 'WAITING_WAKE';
     startRecognition();
   }
@@ -255,3 +329,5 @@ export function useBrowserVoice() {
     onCommand,
   };
 }
+
+export type BrowserVoice = ReturnType<typeof useBrowserVoice>;

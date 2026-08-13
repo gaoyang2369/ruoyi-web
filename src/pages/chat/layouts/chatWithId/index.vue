@@ -6,13 +6,13 @@ import type { BubbleListInstance } from 'vue-element-plus-x/types/BubbleList';
 import type { ThinkingStatus } from 'vue-element-plus-x/types/Thinking';
 import type { ChatSyncEvent, ToolCallInfo, VoiceStatus, WfNodeEvent } from './types';
 import type { SendDTO, WfNodeInput, WfNodeInputDef } from '@/api/chat/types';
+import type { BrowserVoice } from '@/composables/useBrowserVoice';
 import { useHookFetch } from 'hook-fetch/vue';
 import { nextTick } from 'vue';
 import { useRoute } from 'vue-router';
 import { send } from '@/api';
 import assistantAvatar from '@/assets/images/logo.png';
 import ChatSender from '@/components/ChatSender/index.vue';
-import { useBrowserVoice } from '@/composables/useBrowserVoice';
 import { useAgentStore } from '@/stores/modules/agent';
 import { useChatStore } from '@/stores/modules/chat';
 import { useDesignStore } from '@/stores/modules/design';
@@ -21,6 +21,14 @@ import { useUserStore } from '@/stores/modules/user';
 import { codeXRender } from '@/utils/markdownRenderers';
 import ToolCallGroup from './components/ToolCallGroup.vue';
 import WfNodeCard from './components/WfNodeCard.vue';
+
+const props = defineProps<{
+  voice: BrowserVoice;
+}>();
+
+const emit = defineEmits<{
+  toggleVoiceWake: [];
+}>();
 
 type MessageItem = BubbleProps & {
   key: number;
@@ -64,7 +72,7 @@ const inputValue = ref('');
 const chatSenderRef = ref<InstanceType<typeof ChatSender> | null>(null);
 const bubbleItems = ref<MessageItem[]>([]);
 const bubbleListRef = ref<BubbleListInstance | null>(null);
-const browserVoice = useBrowserVoice();
+const browserVoice = props.voice;
 
 const voiceStatus = ref<VoiceStatus>('IDLE');
 const voiceStatusText: Record<VoiceStatus, string> = {
@@ -120,7 +128,7 @@ const {
   },
 });
 
-browserVoice.onCommand((text) => {
+const removeVoiceCommand = browserVoice.onCommand((text) => {
   void startSSE(text);
 });
 
@@ -129,7 +137,6 @@ onMounted(() => {
   bubbleItems.value.forEach((item) => {
     copyIconMap.value[item.key] = 'CopyDocument';
   });
-  document.addEventListener('visibilitychange', handleVisibilityChange);
 });
 
 const currentSessionId = computed(() => {
@@ -151,8 +158,7 @@ watch(
 );
 
 onBeforeUnmount(() => {
-  document.removeEventListener('visibilitychange', handleVisibilityChange);
-  browserVoice.disable();
+  removeVoiceCommand();
   disconnectChatSync();
 });
 
@@ -162,7 +168,6 @@ let isThinking = false;
 watch(
   () => route.params?.id,
   async (_id_) => {
-    browserVoice.disable();
     if (_id_) {
       // 切换会话时清空工具调用事件与工作流节点事件
       toolCallEvents.value = [];
@@ -1016,24 +1021,6 @@ async function cancelSSE() {
   browserVoice.resume();
 }
 
-function toggleVoiceWake() {
-  if (browserVoice.enabled.value) {
-    browserVoice.disable();
-  }
-  else {
-    browserVoice.enable();
-  }
-}
-
-function handleVisibilityChange() {
-  if (document.hidden) {
-    browserVoice.pause();
-  }
-  else if (!isLoading.value) {
-    browserVoice.resume();
-  }
-}
-
 function copyToClipboard(text: string, key: number) {
   navigator.clipboard
     .writeText(text)
@@ -1227,7 +1214,7 @@ function sendMessageByKey(key: number) {
           :voice-supported="browserVoice.supported.value"
           @submit="startSSE"
           @cancel="cancelSSE"
-          @toggle-voice-wake="toggleVoiceWake"
+          @toggle-voice-wake="emit('toggleVoiceWake')"
         />
       </div>
     </div>
