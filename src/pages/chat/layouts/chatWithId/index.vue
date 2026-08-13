@@ -18,7 +18,7 @@ import { useDesignStore } from '@/stores/modules/design';
 import { useModelStore } from '@/stores/modules/model';
 import { useUserStore } from '@/stores/modules/user';
 import { codeXRender } from '@/utils/markdownRenderers';
-import ToolCallGroup from './components/ToolCallGroup.vue';
+import AnalysisTracePanel from './components/AnalysisTracePanel.vue';
 import WfNodeCard from './components/WfNodeCard.vue';
 
 const props = defineProps<{
@@ -89,8 +89,6 @@ let chatSyncReconnectAttempts = 0;
 let shouldKeepChatSyncConnected = false;
 const receivedSyncEventIds = new Set<string>();
 
-// 独立的工具调用事件列表
-const toolCallEvents = ref<ToolCallInfo[]>([]);
 // 工具调用事件计数器（用于生成唯一 key）
 let toolCallKeyCounter = 0;
 
@@ -112,8 +110,21 @@ const hasWfNodeEvents = computed(() => wfNodeEvents.value.length > 0);
 // Hermes 故障诊断只展示结构化分析进度；不启用也不暴露“深度思考”。
 const isFaultDiagnosisAgent = computed(() => agentStore.currentAgentInfo?.scenarioCode === 'FAULT_DIAGNOSIS');
 
-// 是否有工具调用事件
-const hasToolCallEvents = computed(() => toolCallEvents.value.length > 0);
+const analysisPanelOpen = ref(false);
+let analysisPanelCollapseTimer: number | undefined;
+const activeAnalysisMessage = computed(() => [...bubbleItems.value].reverse().find(item =>
+  item.role === 'system' && item.analysisStatus && item.analysisStartedAt,
+));
+const analysisPanelLabel = computed(() => {
+  const status = activeAnalysisMessage.value?.analysisStatus;
+  if (status === 'completed')
+    return '分析完成';
+  if (status === 'failed')
+    return '分析失败';
+  if (status === 'cancelled')
+    return '分析已取消';
+  return '分析中';
+});
 
 const copyIconMap = ref<Record<number, string>>({}); // 记录每条消息的复制按钮图标
 const editingMessageKeys = ref<number[]>([]); // 跟踪多个编辑中的消息
@@ -162,6 +173,9 @@ watch(
 onBeforeUnmount(() => {
   removeVoiceCommand();
   disconnectChatSync();
+  if (analysisPanelCollapseTimer) {
+    window.clearTimeout(analysisPanelCollapseTimer);
+  }
 });
 
 let isThinking = false;
@@ -171,9 +185,9 @@ watch(
   () => route.params?.id,
   async (_id_) => {
     if (_id_) {
-      // 切换会话时清空工具调用事件与工作流节点事件
-      toolCallEvents.value = [];
+      // 切换会话时清空工作流节点事件与当前请求的分析轨迹。
       toolCallKeyCounter = 0;
+      analysisPanelOpen.value = false;
       wfNodeEvents.value = [];
       wfNodeKeyCounter = 0;
       wfNodeUuidToRuntimeUuid.value = {};
@@ -382,6 +396,7 @@ function ensureVoiceAssistantMessage(requestId: string): MessageItem {
     return existing;
   }
   addMessage('', false, { requestId, source: 'VOICE', toolCallEvents: [] });
+  openAnalysisPanel();
   return bubbleItems.value[bubbleItems.value.length - 1];
 }
 
@@ -433,6 +448,7 @@ function handleSyncToolProgress(event: Record<string, any>) {
   }
   message.toolCallEvents = tools;
   message.analysisStatus = 'querying';
+  openAnalysisPanel();
   bubbleItems.value = [...bubbleItems.value];
   bubbleListRef.value?.scrollToBottom();
 }
@@ -457,11 +473,41 @@ function finishAssistantAnalysis(
     markPendingToolsSuccess(message);
   }
   message.analysisStatus = status;
+  scheduleAnalysisPanelCollapse(status);
 }
 
 function finishCurrentAssistantAnalysis(status: NonNullable<MessageItem['analysisStatus']>) {
   finishAssistantAnalysis(bubbleItems.value[bubbleItems.value.length - 1], status);
   bubbleItems.value = [...bubbleItems.value];
+}
+
+function openAnalysisPanel() {
+  if (analysisPanelCollapseTimer) {
+    window.clearTimeout(analysisPanelCollapseTimer);
+    analysisPanelCollapseTimer = undefined;
+  }
+  analysisPanelOpen.value = true;
+}
+
+function collapseAnalysisPanel() {
+  if (analysisPanelCollapseTimer) {
+    window.clearTimeout(analysisPanelCollapseTimer);
+    analysisPanelCollapseTimer = undefined;
+  }
+  analysisPanelOpen.value = false;
+}
+
+function scheduleAnalysisPanelCollapse(status: NonNullable<MessageItem['analysisStatus']>) {
+  if (!['completed', 'failed', 'cancelled'].includes(status)) {
+    return;
+  }
+  if (analysisPanelCollapseTimer) {
+    window.clearTimeout(analysisPanelCollapseTimer);
+  }
+  analysisPanelCollapseTimer = window.setTimeout(() => {
+    analysisPanelOpen.value = false;
+    analysisPanelCollapseTimer = undefined;
+  }, 1200);
 }
 
 function normalizeToolStatus(status: unknown): ToolCallInfo['status'] {
@@ -500,8 +546,6 @@ async function startSSE(chatContent: string) {
   browserVoice.pause();
 
   try {
-    // 清空上一次的工具调用事件
-    toolCallEvents.value = [];
     toolCallKeyCounter = 0;
     // 绑定了工作流时，清空上一次的节点事件
     if (currentBinding.value) {
@@ -515,6 +559,7 @@ async function startSSE(chatContent: string) {
     inputValue.value = '';
     addMessage(chatContent, true);
     addMessage('', false, { toolCallEvents: [] });
+    openAnalysisPanel();
 
     // 这里有必要调用一下 BubbleList 组件的滚动到底部 手动触发 自动滚动
     bubbleListRef.value?.scrollToBottom();
@@ -634,6 +679,7 @@ async function startResumeSSE(feedbackContent: string) {
   try {
     addMessage(feedbackContent, true);
     addMessage('', false, { toolCallEvents: [] });
+    openAnalysisPanel();
     bubbleListRef.value?.scrollToBottom();
 
     const payload: SendDTO = {
@@ -965,6 +1011,7 @@ function handleMcpEvent(dataObj: AnyObject) {
     }
     message.toolCallEvents = tools;
     message.analysisStatus = 'querying';
+    openAnalysisPanel();
     bubbleItems.value = [...bubbleItems.value];
     bubbleListRef.value?.scrollToBottom();
   }
@@ -987,6 +1034,7 @@ function handleContentChunk(content: string) {
       lastMessage.hasReceivedContent = true;
       markPendingToolsSuccess(lastMessage);
       lastMessage.analysisStatus = 'generating';
+      openAnalysisPanel();
     }
   }
 
@@ -1117,124 +1165,125 @@ function sendMessageByKey(key: number) {
 
 <template>
   <div class="chat-with-id-container">
-    <div class="chat-warp">
-      <Transition name="tool-events-fade">
-        <div v-if="hasToolCallEvents" class="tool-events-wrapper">
-          <ToolCallGroup :tools="toolCallEvents" />
-        </div>
-      </Transition>
-
-      <!-- 工作流节点事件区域 -->
-      <Transition name="tool-events-fade">
-        <div v-if="hasWfNodeEvents" class="tool-events-wrapper">
-          <WfNodeCard
-            v-for="evt in wfNodeEvents"
-            :key="evt.key"
-            :event="evt"
-          />
-        </div>
-      </Transition>
-
-      <BubbleList ref="bubbleListRef" :list="bubbleItems" max-height="calc(100vh - 240px)">
-        <template #header="{ item }">
-          <div v-if="item.analysisStatus || item.toolCallEvents?.length" class="assistant-tool-events">
-            <ToolCallGroup
-              :tools="item.toolCallEvents || []"
-              :analysis-status="item.analysisStatus"
-              :analysis-started-at="item.analysisStartedAt"
+    <div class="chat-shell" :class="{ 'analysis-panel-open': analysisPanelOpen }">
+      <div class="chat-warp">
+        <!-- 工作流节点事件区域 -->
+        <Transition name="tool-events-fade">
+          <div v-if="hasWfNodeEvents" class="tool-events-wrapper">
+            <WfNodeCard
+              v-for="evt in wfNodeEvents"
+              :key="evt.key"
+              :event="evt"
             />
           </div>
-        </template>
+        </Transition>
 
-        <template #content="{ item }">
-          <!-- 工作流人机交互：输入框气泡 -->
-          <div v-if="item.isWorkflowFeedback" class="wf-feedback-bubble">
-            <div class="wf-feedback-tip">
-              <el-icon style="color: #E6A23C; margin-right: 4px; vertical-align: -2px;">
-                <WarningFilled />
-              </el-icon>
-              {{ item.feedbackTip || '流程已暂停，请输入内容后继续' }}
+        <BubbleList ref="bubbleListRef" :list="bubbleItems" max-height="calc(100vh - 240px)">
+          <template #content="{ item }">
+            <!-- 工作流人机交互：输入框气泡 -->
+            <div v-if="item.isWorkflowFeedback" class="wf-feedback-bubble">
+              <div class="wf-feedback-tip">
+                <el-icon style="color: #E6A23C; margin-right: 4px; vertical-align: -2px;">
+                  <WarningFilled />
+                </el-icon>
+                {{ item.feedbackTip || '流程已暂停，请输入内容后继续' }}
+              </div>
+              <el-input
+                v-model="item.feedbackValue"
+                type="textarea"
+                :autosize="{ minRows: 2, maxRows: 5 }"
+                placeholder="输入内容后提交，继续执行流程"
+              />
+              <div class="wf-feedback-actions">
+                <el-button type="primary" size="small" @click="submitFeedback(item)">
+                  提交并继续
+                </el-button>
+              </div>
             </div>
-            <el-input
-              v-model="item.feedbackValue"
-              type="textarea"
-              :autosize="{ minRows: 2, maxRows: 5 }"
-              placeholder="输入内容后提交，继续执行流程"
+            <XMarkdown
+              v-else-if="item.content && item.role === 'system'"
+              :markdown="item.content"
+              :code-x-render="codeXRender"
+              class="markdown-body"
+              :themes="{ light: 'github-light', dark: 'github-dark' }"
+              :default-theme-mode="markdownThemeMode"
             />
-            <div class="wf-feedback-actions">
-              <el-button type="primary" size="small" @click="submitFeedback(item)">
-                提交并继续
-              </el-button>
-            </div>
-          </div>
-          <XMarkdown
-            v-else-if="item.content && item.role === 'system'"
-            :markdown="item.content"
-            :code-x-render="codeXRender"
-            class="markdown-body"
-            :themes="{ light: 'github-light', dark: 'github-dark' }"
-            :default-theme-mode="markdownThemeMode"
-          />
-          <div v-if="item.content && item.role === 'user'" class="userContent">
-            <div class="user-bubble" :class="{ editing: editingMessageKeys.includes(item.key) }">
-              <template v-if="!editingMessageKeys.includes(item.key)">
-                <div class="user-content">
-                  {{ item.content }}
-                </div>
-              </template>
-
-              <template v-else>
-                <div class="edit-card">
-                  <el-input
-                    v-model="editedContents[item.key]"
-                    type="textarea"
-                    autosize
-                    class="edit-input"
-                  />
-                  <div class="edit-actions">
-                    <el-button size="small" @click="cancelEditingByKey(item.key)">
-                      取消
-                    </el-button>
-                    <el-button type="primary" size="small" @click="sendMessageByKey(item.key)">
-                      发送
-                    </el-button>
+            <div v-if="item.content && item.role === 'user'" class="userContent">
+              <div class="user-bubble" :class="{ editing: editingMessageKeys.includes(item.key) }">
+                <template v-if="!editingMessageKeys.includes(item.key)">
+                  <div class="user-content">
+                    {{ item.content }}
                   </div>
-                </div>
-              </template>
-            </div>
+                </template>
 
-            <div v-if="!editingMessageKeys.includes(item.key)" class="copy-button-container">
-              <el-tooltip content="复制" placement="bottom">
-                <el-button
-                  class="copy-btn"
-                  :icon="copyIconMap[item.key] || 'CopyDocument'"
-                  size="small"
-                  @click="copyToClipboard(item.content, item.key)"
-                />
-              </el-tooltip>
-              <el-tooltip content="编辑" placement="bottom">
-                <el-button class="copy-btn" icon="Edit" size="small" @click="startEditing(item)" />
-              </el-tooltip>
-            </div>
-          </div>
-        </template>
-      </BubbleList>
+                <template v-else>
+                  <div class="edit-card">
+                    <el-input
+                      v-model="editedContents[item.key]"
+                      type="textarea"
+                      autosize
+                      class="edit-input"
+                    />
+                    <div class="edit-actions">
+                      <el-button size="small" @click="cancelEditingByKey(item.key)">
+                        取消
+                      </el-button>
+                      <el-button type="primary" size="small" @click="sendMessageByKey(item.key)">
+                        发送
+                      </el-button>
+                    </div>
+                  </div>
+                </template>
+              </div>
 
-      <div class="sender-wrapper">
-        <ChatSender
-          ref="chatSenderRef"
-          v-model="inputValue"
-          compact
-          :loading="isLoading"
-          show-voice-wake
-          :voice-enabled="browserVoice.enabled.value"
-          :voice-status="browserVoice.status.value"
-          :voice-supported="browserVoice.supported.value"
-          @submit="startSSE"
-          @cancel="cancelSSE"
-          @toggle-voice-wake="emit('toggleVoiceWake')"
-        />
+              <div v-if="!editingMessageKeys.includes(item.key)" class="copy-button-container">
+                <el-tooltip content="复制" placement="bottom">
+                  <el-button
+                    class="copy-btn"
+                    :icon="copyIconMap[item.key] || 'CopyDocument'"
+                    size="small"
+                    @click="copyToClipboard(item.content, item.key)"
+                  />
+                </el-tooltip>
+                <el-tooltip content="编辑" placement="bottom">
+                  <el-button class="copy-btn" icon="Edit" size="small" @click="startEditing(item)" />
+                </el-tooltip>
+              </div>
+            </div>
+          </template>
+        </BubbleList>
+
+        <div class="sender-wrapper">
+          <ChatSender
+            ref="chatSenderRef"
+            v-model="inputValue"
+            compact
+            :loading="isLoading"
+            show-voice-wake
+            :voice-enabled="browserVoice.enabled.value"
+            :voice-status="browserVoice.status.value"
+            :voice-supported="browserVoice.supported.value"
+            @submit="startSSE"
+            @cancel="cancelSSE"
+            @toggle-voice-wake="emit('toggleVoiceWake')"
+          />
+        </div>
       </div>
+      <aside v-if="activeAnalysisMessage" class="analysis-sidebar" :class="{ 'is-collapsed': !analysisPanelOpen }">
+        <AnalysisTracePanel
+          v-if="analysisPanelOpen"
+          :tools="activeAnalysisMessage.toolCallEvents || []"
+          :status="activeAnalysisMessage.analysisStatus!"
+          :started-at="activeAnalysisMessage.analysisStartedAt"
+          @collapse="collapseAnalysisPanel"
+        />
+        <el-tooltip v-else content="展开分析轨迹" placement="left">
+          <button class="analysis-rail" type="button" @click="openAnalysisPanel">
+            <el-icon><DataAnalysis /></el-icon>
+            <span>{{ analysisPanelLabel }}</span>
+          </button>
+        </el-tooltip>
+      </aside>
     </div>
   </div>
 </template>
@@ -1332,16 +1381,23 @@ function sendMessageByKey(key: number) {
   width: 100%;
   height: 100%;
 
+  .chat-shell {
+    position: relative;
+    display: flex;
+    gap: 18px;
+    width: min(1520px, calc(100vw - 64px));
+    max-width: 100%;
+    height: calc(100vh - 60px);
+  }
+
   .chat-warp {
     display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
     flex-direction: column;
-    width: clamp(820px, 68vw, 1180px);
-    max-width: calc(100vw - 64px);
-    height: calc(100vh - 60px);
-
-    .thinking-chain-warp {
-      margin-bottom: 12px;
-    }
+    width: auto;
+    max-width: 1180px;
+    height: 100%;
 
     .tool-events-wrapper {
       flex: 0 0 auto;
@@ -1380,11 +1436,6 @@ function sendMessageByKey(key: number) {
       }
     }
 
-    .assistant-tool-events {
-      width: min(640px, 100%);
-      margin-bottom: 8px;
-    }
-
     .tool-events-fade-enter-active,
     .tool-events-fade-leave-active {
       transition: all 0.3s ease;
@@ -1402,6 +1453,39 @@ function sendMessageByKey(key: number) {
       flex: 0 0 auto;
       margin: 34px 0 22px;
     }
+  }
+
+  .analysis-sidebar {
+    width: 350px;
+    min-width: 350px;
+    height: calc(100% - 22px);
+    margin: 10px 0 12px;
+    transition: width .25s ease, min-width .25s ease;
+
+    &.is-collapsed {
+      display: flex;
+      align-items: center;
+      width: 42px;
+      min-width: 42px;
+    }
+  }
+
+  .analysis-rail {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    width: 42px;
+    padding: 12px 7px;
+    color: #5a77b5;
+    font-size: 11px;
+    cursor: pointer;
+    background: #f7faff;
+    border: 1px solid #dce7fb;
+    border-radius: 12px;
+    box-shadow: 0 8px 20px rgb(78 115 178 / 10%);
+
+    span { writing-mode: vertical-rl; letter-spacing: .08em; }
   }
 
   :deep() {
@@ -1450,10 +1534,27 @@ function sendMessageByKey(key: number) {
   }
 }
 
-@media (max-width: 900px) {
-  .chat-with-id-container .chat-warp {
+@media (max-width: 1180px) {
+  .chat-with-id-container .chat-shell {
     width: 100%;
     max-width: calc(100vw - 32px);
+  }
+
+  .chat-with-id-container .analysis-sidebar {
+    position: absolute;
+    top: 8px;
+    right: 0;
+    z-index: 10;
+    width: min(350px, calc(100vw - 48px));
+    min-width: 0;
+    height: calc(100% - 20px);
+    margin: 0;
+
+    &.is-collapsed {
+      right: -2px;
+      width: 42px;
+      min-width: 42px;
+    }
   }
 }
 

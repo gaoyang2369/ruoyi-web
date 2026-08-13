@@ -6,9 +6,10 @@ const props = defineProps<{
   tools: ToolCallInfo[];
   analysisStatus?: 'analyzing' | 'querying' | 'generating' | 'completed' | 'failed' | 'cancelled';
   analysisStartedAt?: number;
+  defaultExpanded?: boolean;
 }>();
 
-const isExpanded = ref(false);
+const isExpanded = ref(Boolean(props.defaultExpanded));
 const pendingCount = computed(() => props.tools.filter(tool => tool.status === 'pending').length);
 const successCount = computed(() => props.tools.filter(tool => tool.status === 'success').length);
 const errorCount = computed(() => props.tools.filter(tool => tool.status === 'error').length);
