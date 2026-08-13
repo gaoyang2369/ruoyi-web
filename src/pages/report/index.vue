@@ -3,6 +3,7 @@ import type { CompletenessCategory, OperationReportResult, ReportHealthStatus } 
 import { useRoute, useRouter } from 'vue-router';
 import { getOperationReport } from '@/api/report';
 import ReportCompletenessChart from './components/ReportCompletenessChart.vue';
+import ReportStatusTimeline from './components/ReportStatusTimeline.vue';
 import ReportTrendChart from './components/ReportTrendChart.vue';
 
 const route = useRoute();
@@ -65,26 +66,6 @@ const diagnosisLabels: Record<string, string> = {
   DATA_INSUFFICIENT: '数据不足',
   UNKNOWN: '未知',
 };
-
-const timeline = computed(() => {
-  if (!report.value) {
-    return [];
-  }
-  return report.value.events.flatMap((event) => {
-    const rows: Array<{ time: string; text: string; kind: string }> = [];
-    if (event.firstSeenAt) {
-      rows.push({
-        time: event.firstSeenAt,
-        text: `${event.type === 'ALARM' ? '报警' : '故障'} ${event.code} 触发`,
-        kind: event.type,
-      });
-    }
-    if (event.recoveredAt) {
-      rows.push({ time: event.recoveredAt, text: `${event.code} 恢复`, kind: 'RECOVERED' });
-    }
-    return rows;
-  }).sort((left, right) => left.time.localeCompare(right.time));
-});
 
 const visibleEvidence = computed(() => report.value?.evidence.filter(item => item.userVisible) || []);
 
@@ -305,15 +286,26 @@ function handleAfterPrint() {
           </div>
         </section>
 
+        <section class="report-section report-print-block">
+          <div class="section-heading report-print-block">
+            <span>03</span><h2>运行时间线</h2>
+          </div>
+          <ReportStatusTimeline
+            :window-start="report.period.windowStart" :window-end="report.period.windowEnd"
+            :status-timeline="report.statusTimeline" :events="report.events" :current-status="report.currentStatus"
+          />
+        </section>
+
         <section class="report-section trend-section">
           <div class="section-heading report-print-block">
-            <span>03</span><h2>运行趋势</h2>
+            <span>04</span><h2>运行趋势</h2>
           </div>
           <div class="chart-grid">
             <ReportTrendChart
               v-for="panel in trendPanels" ref="trendChartRefs" :key="panel.title" :title="panel.title"
               :metric-names="panel.metricNames" :metric-labels="metricLabels" :metric-units="report.metricUnits"
-              :trends="report.trends" :events="report.events"
+              :trends="report.trends" :events="report.events" :window-start="report.period.windowStart"
+              :window-end="report.period.windowEnd"
             />
           </div>
           <el-empty v-if="!report.trends.length" description="本报告快照中没有可展示的真实趋势数据" />
@@ -325,25 +317,6 @@ function handleAfterPrint() {
               </li>
             </ul>
           </div>
-        </section>
-
-        <section class="report-section report-print-block">
-          <div class="section-heading">
-            <span>04</span><h2>异常事件</h2>
-          </div>
-          <el-timeline v-if="timeline.length">
-            <el-timeline-item
-              v-for="item in timeline"
-              :key="`${item.time}-${item.text}`"
-              :timestamp="formatDate(item.time)"
-              :type="item.kind === 'FAULT' ? 'danger' : item.kind === 'ALARM' ? 'warning' : 'success'"
-            >
-              {{ item.text }}
-            </el-timeline-item>
-          </el-timeline>
-          <p v-else class="empty-copy">
-            报告周期内未发现故障或报警事件。
-          </p>
         </section>
 
         <section class="report-section report-print-block">

@@ -9,6 +9,8 @@ const props = defineProps<{
   metricUnits: Record<string, string>;
   trends: ReportTrend[];
   events: ReportEvent[];
+  windowStart: string;
+  windowEnd: string;
 }>();
 
 const chartEl = ref<HTMLDivElement | null>(null);
@@ -20,26 +22,31 @@ const selectedTrends = computed(() => props.metricNames
   .filter((trend): trend is ReportTrend => Boolean(trend?.points?.length)));
 
 function buildOption(): echarts.EChartsOption {
-  const alarmMarks = props.events
-    .filter(event => event.type === 'ALARM')
+  const eventMarks = props.events
     .flatMap((event) => {
       const marks: Array<Record<string, unknown>> = [];
-      if (event.firstSeenAt) {
+      const start = toMilliseconds(event.firstSeenAt);
+      if (start !== null) {
         marks.push({
-          xAxis: event.firstSeenAt,
-          lineStyle: { color: '#e6a23c', type: 'dashed' },
-          label: { show: false },
+          name: `${event.code} 触发`,
+          xAxis: start,
+          lineStyle: { color: event.type === 'FAULT' ? '#c74b4b' : '#e6a23c', type: 'dashed' },
+          label: { show: true, formatter: '{b}', color: '#667085', fontSize: 10 },
         });
       }
-      if (event.recoveredAt) {
+      const recovered = toMilliseconds(event.recoveredAt);
+      if (recovered !== null) {
         marks.push({
-          xAxis: event.recoveredAt,
+          name: `${event.code} 恢复`,
+          xAxis: recovered,
           lineStyle: { color: '#39a275', type: 'dashed' },
-          label: { show: false },
+          label: { show: true, formatter: '{b}', color: '#667085', fontSize: 10 },
         });
       }
       return marks;
     });
+  const windowStart = toMilliseconds(props.windowStart);
+  const windowEnd = toMilliseconds(props.windowEnd);
 
   return {
     animation: false,
@@ -49,7 +56,9 @@ function buildOption(): echarts.EChartsOption {
     tooltip: { trigger: 'axis' },
     xAxis: {
       type: 'time',
-      axisLabel: { color: '#667085', hideOverlap: true },
+      min: windowStart ?? undefined,
+      max: windowEnd ?? undefined,
+      axisLabel: { color: '#667085', hideOverlap: true, formatter: formatAxisTime },
       splitLine: { show: false },
     },
     yAxis: {
@@ -64,10 +73,10 @@ function buildOption(): echarts.EChartsOption {
       type: 'line',
       showSymbol: false,
       connectNulls: false,
-      data: trend.points.map(point => [point.timestamp, point.value]),
+      data: trend.points.map(point => [toMilliseconds(point.timestamp) ?? point.timestamp, point.value]),
       lineStyle: { width: 2 },
-      markLine: index === 0 && alarmMarks.length
-        ? { silent: true, symbol: ['none', 'none'], data: alarmMarks }
+      markLine: index === 0 && eventMarks.length
+        ? { silent: true, symbol: ['none', 'none'], data: eventMarks }
         : undefined,
     })),
   };
@@ -79,6 +88,22 @@ function unitLabel() {
   return configuredUnits.every(Boolean) && uniqueUnits.size === 1
     ? [...uniqueUnits][0]
     : '单位未配置';
+}
+
+function toMilliseconds(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+  const timestamp = new Date(value.trim().replace(' ', 'T')).getTime();
+  return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function formatAxisTime(value: number | string) {
+  const timestamp = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(timestamp)) {
+    return '';
+  }
+  return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(timestamp);
 }
 
 function renderChart() {
