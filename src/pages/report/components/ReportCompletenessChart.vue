@@ -5,6 +5,7 @@ import * as echarts from 'echarts';
 const props = defineProps<{ category: CompletenessCategory }>();
 const chartEl = ref<HTMLDivElement | null>(null);
 let chart: echarts.ECharts | null = null;
+let resizeObserver: ResizeObserver | null = null;
 
 function renderChart() {
   if (!chartEl.value) {
@@ -39,11 +40,33 @@ function renderChart() {
       },
     }],
   }, true);
+  resizeForPrint();
 }
 
-onMounted(renderChart);
+function resizeForPrint() {
+  if (!chartEl.value || !chart) {
+    return;
+  }
+  const { width, height } = chartEl.value.getBoundingClientRect();
+  if (width > 0 && height > 0) {
+    chart.resize({ width, height });
+  }
+}
+
+onMounted(() => {
+  renderChart();
+  if (chartEl.value) {
+    resizeObserver = new ResizeObserver(resizeForPrint);
+    resizeObserver.observe(chartEl.value);
+  }
+});
 watch(() => props.category, renderChart, { deep: true });
-onBeforeUnmount(() => chart?.dispose());
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect();
+  chart?.dispose();
+});
+
+defineExpose({ resizeForPrint });
 </script>
 
 <template>
@@ -52,7 +75,8 @@ onBeforeUnmount(() => chart?.dispose());
 
 <style scoped>
 .completeness-chart {
-  width: 240px;
-  height: 220px;
+  width: 100%;
+  max-width: 240px;
+  aspect-ratio: 12 / 11;
 }
 </style>

@@ -26,18 +26,16 @@ function buildOption(): echarts.EChartsOption {
       const marks: Array<Record<string, unknown>> = [];
       if (event.firstSeenAt) {
         marks.push({
-          name: `${event.code} 触发`,
           xAxis: event.firstSeenAt,
           lineStyle: { color: '#e6a23c', type: 'dashed' },
-          label: { formatter: `${event.code} 触发`, color: '#a76800' },
+          label: { show: false },
         });
       }
       if (event.recoveredAt) {
         marks.push({
-          name: `${event.code} 恢复`,
           xAxis: event.recoveredAt,
           lineStyle: { color: '#39a275', type: 'dashed' },
-          label: { formatter: `${event.code} 恢复`, color: '#277455' },
+          label: { show: false },
         });
       }
       return marks;
@@ -89,46 +87,35 @@ function renderChart() {
   }
   chart ||= echarts.init(chartEl.value);
   chart.setOption(buildOption(), true);
-  requestAnimationFrame(() => chart?.resize());
+  resizeForPrint();
 }
 
-function resizeAfterPrintLayout() {
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    if (chartEl.value && chartEl.value.clientWidth > 0 && chartEl.value.clientHeight > 0)
-      chart?.resize();
-  }));
-}
-
-function beforePrint() {
-  // Some browsers dispatch beforeprint before their @media print reflow. Apply the
-  // same chart size marker first, then resize on the settled layout.
-  document.documentElement.classList.add('report-printing');
-  resizeAfterPrintLayout();
-}
-
-function afterPrint() {
-  document.documentElement.classList.remove('report-printing');
-  resizeAfterPrintLayout();
+function resizeForPrint() {
+  if (!chartEl.value || !chart) {
+    return;
+  }
+  const { width, height } = chartEl.value.getBoundingClientRect();
+  if (width > 0 && height > 0) {
+    chart.resize({ width, height });
+  }
 }
 
 onMounted(() => {
   renderChart();
   if (chartEl.value) {
-    resizeObserver = new ResizeObserver(resizeAfterPrintLayout);
+    resizeObserver = new ResizeObserver(resizeForPrint);
     resizeObserver.observe(chartEl.value);
   }
-  window.addEventListener('beforeprint', beforePrint);
-  window.addEventListener('afterprint', afterPrint);
 });
 
 watch(() => [props.metricNames, props.trends, props.events, props.metricUnits], renderChart, { deep: true });
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
-  window.removeEventListener('beforeprint', beforePrint);
-  window.removeEventListener('afterprint', afterPrint);
   chart?.dispose();
 });
+
+defineExpose({ resizeForPrint });
 </script>
 
 <template>
@@ -154,24 +141,12 @@ h3 {
 
 .trend-chart-canvas {
   width: 100%;
-  height: 320px;
+  aspect-ratio: 16 / 9;
 }
 
 @media print {
   .trend-chart {
     padding: 10px !important;
   }
-
-  .trend-chart-canvas {
-    height: 200px !important;
-  }
-}
-
-:global(html.report-printing .trend-chart) {
-  padding: 10px !important;
-}
-
-:global(html.report-printing .trend-chart-canvas) {
-  height: 200px !important;
 }
 </style>

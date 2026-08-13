@@ -55,6 +55,7 @@ useWindowWidthObserver();
     padding: 0;
   }
   .layout-container-main {
+    min-height: 0;
     margin-left: var(--sidebar-left-container-default-width, 0);
     transition: margin-left 0.3s ease;
   }

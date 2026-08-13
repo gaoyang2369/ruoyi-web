@@ -10,6 +10,10 @@ const router = useRouter();
 const loading = ref(true);
 const errorMessage = ref('');
 const report = ref<OperationReportResult | null>(null);
+interface ReportChartInstance { resizeForPrint: () => void }
+const trendChartRefs = ref<ReportChartInstance[]>([]);
+const completenessChartRef = ref<ReportChartInstance | null>(null);
+const isPreparingPrint = ref(false);
 
 const metricLabels: Record<string, string> = {
   dcVoltage: '直流电压',
@@ -85,14 +89,13 @@ const timeline = computed(() => {
 const visibleEvidence = computed(() => report.value?.evidence.filter(item => item.userVisible) || []);
 
 onMounted(async () => {
+  window.addEventListener('beforeprint', handleBeforePrint);
+  window.addEventListener('afterprint', handleAfterPrint);
+
   try {
     const reportCode = String(route.params.reportCode || '');
     const response = await getOperationReport(reportCode);
     report.value = response.report;
-    await nextTick();
-    if (route.query.print === '1') {
-      window.setTimeout(() => window.print(), 700);
-    }
   }
   catch {
     errorMessage.value = '报告不存在、无访问权限或加载失败。';
@@ -100,6 +103,16 @@ onMounted(async () => {
   finally {
     loading.value = false;
   }
+
+  if (report.value && route.query.print === '1') {
+    await prepareAndPrint();
+  }
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeprint', handleBeforePrint);
+  window.removeEventListener('afterprint', handleAfterPrint);
+  document.documentElement.classList.remove('report-print-layout');
 });
 
 function formatDate(value: string | null | undefined) {
@@ -125,8 +138,58 @@ function statusClass(status: ReportHealthStatus) {
   return `status-${status.toLowerCase()}`;
 }
 
-function printReport() {
+function returnToSource() {
+  const returnTo = typeof route.query.returnTo === 'string' ? route.query.returnTo : '';
+  if (returnTo.startsWith('/') && !returnTo.startsWith('//')) {
+    void router.replace(returnTo);
+    return;
+  }
+
+  if (window.history.length > 1) {
+    router.back();
+    return;
+  }
+
+  void router.replace({ name: 'chat' });
+}
+
+function waitForLayoutFrame() {
+  return new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+}
+
+async function resizeChartsForCurrentLayout() {
+  await nextTick();
+  await waitForLayoutFrame();
+  completenessChartRef.value?.resizeForPrint();
+  trendChartRefs.value.forEach(chart => chart.resizeForPrint());
+}
+
+function setPrintLayout(enabled: boolean) {
+  document.documentElement.classList.toggle('report-print-layout', enabled);
+}
+
+async function prepareAndPrint() {
+  if (isPreparingPrint.value) {
+    return;
+  }
+  isPreparingPrint.value = true;
+  setPrintLayout(true);
+  await resizeChartsForCurrentLayout();
   window.print();
+}
+
+function handleBeforePrint() {
+  if (isPreparingPrint.value) {
+    return;
+  }
+  setPrintLayout(true);
+  void resizeChartsForCurrentLayout();
+}
+
+function handleAfterPrint() {
+  setPrintLayout(false);
+  isPreparingPrint.value = false;
+  void resizeChartsForCurrentLayout();
 }
 </script>
 
@@ -135,7 +198,7 @@ function printReport() {
     <div v-loading="loading" class="report-loading">
       <el-result v-if="errorMessage" icon="warning" title="无法查看报告" :sub-title="errorMessage">
         <template #extra>
-          <el-button @click="router.back()">
+          <el-button @click="returnToSource">
             返回
           </el-button>
         </template>
@@ -143,10 +206,10 @@ function printReport() {
 
       <div v-else-if="report" class="report-sheet">
         <div class="report-actions no-print">
-          <el-button @click="router.back()">
+          <el-button @click="returnToSource">
             返回
           </el-button>
-          <el-button type="primary" @click="printReport">
+          <el-button type="primary" @click="prepareAndPrint">
             导出PDF
           </el-button>
           <span class="print-tip">Firefox/Chrome 打印时请关闭“页眉和页脚”。</span>
@@ -237,7 +300,7 @@ function printReport() {
               <p class="completeness-name">
                 报告总体数据完整率
               </p>
-              <ReportCompletenessChart :category="overallCompleteness" />
+              <ReportCompletenessChart ref="completenessChartRef" :category="overallCompleteness" />
             </div>
           </div>
         </section>
@@ -248,7 +311,7 @@ function printReport() {
           </div>
           <div class="chart-grid">
             <ReportTrendChart
-              v-for="panel in trendPanels" :key="panel.title" :title="panel.title"
+              v-for="panel in trendPanels" ref="trendChartRefs" :key="panel.title" :title="panel.title"
               :metric-names="panel.metricNames" :metric-labels="metricLabels" :metric-units="report.metricUnits"
               :trends="report.trends" :events="report.events"
             />
@@ -398,7 +461,9 @@ function printReport() {
 <style scoped lang="scss">
 .report-page {
   height: 100%;
-  overflow: auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   color: #25364a;
   background: #eef2f6;
 }
@@ -607,7 +672,7 @@ ul, ol { padding-left: 22px; line-height: 1.8; }
 
 .print-only { display: none; }
 
-@media (max-width: 900px) {
+@media screen and (max-width: 900px) {
   .report-sheet { width: calc(100% - 20px); }
   .report-header { padding: 26px 22px; flex-direction: column; }
   .status-grid, .chart-grid { grid-template-columns: 1fr; }
@@ -637,27 +702,77 @@ ul, ol { padding-left: 22px; line-height: 1.8; }
   }
   .report-sheet { width: 100% !important; padding: 0 !important; }
   .report-header, .report-section, .status-grid article, .trend-chart {
+    border-radius: 2px !important;
     box-shadow: none !important;
   }
-  .status-grid article, table, tr, h1, h2, h3 {
+  .report-header {
+    padding: 16px 18px !important;
+    flex-direction: row !important;
+  }
+  .status-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+  }
+  .status-grid article {
+    min-height: 0 !important;
+    padding: 10px 12px !important;
+  }
+  .status-grid strong { font-size: 20px !important; }
+  .quality-grid {
+    grid-template-columns: 1.4fr 1fr !important;
+    gap: 16px !important;
+  }
+  .kpi-grid { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
+  .report-section {
+    padding: 14px 16px !important;
+    margin-top: 8px !important;
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+  .report-header, .status-grid, .status-grid article, tr, .trend-chart, .model-narrative,
+  .operating-findings, .evidence-list li, .recommendation-basis, .el-timeline-item {
     break-inside: avoid;
     page-break-inside: avoid;
   }
-  .section-heading {
+  h1, h2, h3, .section-heading {
     break-after: avoid;
     page-break-after: avoid;
   }
-  /* 数据质量卡片不能拆开，因此让它从独立页起始，避免章节标题落在上一页末尾。 */
-  .summary-section + .report-section {
-    break-before: page;
-    page-break-before: always;
-  }
-  .trend-section { break-before: page; page-break-before: always; }
   .chart-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 10px !important; }
   .trend-chart { break-inside: avoid; page-break-inside: avoid; }
-  .trend-chart-canvas { height: 200px !important; }
   .trend-chart { padding: 10px !important; }
-  .report-section { padding: 14px 16px !important; margin-top: 8px !important; }
+  thead { display: table-header-group; }
+  tfoot { display: table-footer-group; }
+  tr { break-inside: avoid; page-break-inside: avoid; }
+  .table-wrap { overflow: visible !important; }
+  th, td { padding: 7px 6px !important; }
   .two-column { grid-template-columns: 1fr !important; }
+}
+
+html.report-print-layout .report-page {
+  min-width: 0;
+  background: #fff;
+}
+
+html.report-print-layout .report-sheet {
+  width: 186mm !important;
+  padding: 0 !important;
+}
+
+html.report-print-layout .no-print { display: none !important; }
+html.report-print-layout .report-header { padding: 16px 18px !important; flex-direction: row !important; }
+html.report-print-layout .status-grid { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; gap: 8px !important; }
+html.report-print-layout .status-grid article { min-height: 0 !important; padding: 10px 12px !important; }
+html.report-print-layout .quality-grid { grid-template-columns: 1.4fr 1fr !important; gap: 16px !important; }
+html.report-print-layout .kpi-grid { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
+html.report-print-layout .chart-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 10px !important; }
+html.report-print-layout .report-section { padding: 14px 16px !important; margin-top: 8px !important; }
+html.report-print-layout .trend-chart { padding: 10px !important; }
+html.report-print-layout .report-header,
+html.report-print-layout .report-section,
+html.report-print-layout .status-grid article,
+html.report-print-layout .trend-chart {
+  border-radius: 2px !important;
+  box-shadow: none !important;
 }
 </style>

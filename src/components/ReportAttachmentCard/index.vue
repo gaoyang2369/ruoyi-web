@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import type { ReportAttachment, ReportHealthStatus } from '@/api/report';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 
 const props = defineProps<{
   report: ReportAttachment;
 }>();
 
 const router = useRouter();
+const route = useRoute();
 
 const statusText: Record<ReportHealthStatus, string> = {
   NORMAL: '正常',
@@ -19,7 +20,10 @@ function reportLocation(print = false) {
   return router.resolve({
     name: 'operationReport',
     params: { reportCode: props.report.reportCode },
-    query: print ? { print: '1' } : {},
+    query: {
+      returnTo: route.fullPath,
+      ...(print ? { print: '1' } : {}),
+    },
   }).href;
 }
 
