@@ -1384,19 +1384,17 @@ function sendMessageByKey(key: number) {
   .chat-shell {
     position: relative;
     display: flex;
-    gap: 18px;
-    width: min(1520px, calc(100vw - 64px));
-    max-width: 100%;
+    width: 100%;
     height: calc(100vh - 60px);
   }
 
   .chat-warp {
     display: flex;
     min-width: 0;
-    flex: 1 1 auto;
+    flex: 0 1 auto;
     flex-direction: column;
-    width: auto;
-    max-width: 1180px;
+    width: min(1180px, calc(100vw - 64px));
+    margin: 0 auto;
     height: 100%;
 
     .tool-events-wrapper {
@@ -1456,10 +1454,13 @@ function sendMessageByKey(key: number) {
   }
 
   .analysis-sidebar {
+    position: absolute;
+    top: 10px;
+    left: calc(50% + 608px);
     width: 350px;
     min-width: 350px;
     height: calc(100% - 22px);
-    margin: 10px 0 12px;
+    margin: 0;
     transition: width .25s ease, min-width .25s ease;
 
     &.is-collapsed {
@@ -1534,16 +1535,16 @@ function sendMessageByKey(key: number) {
   }
 }
 
-@media (max-width: 1180px) {
+@media (max-width: 1920px) {
   .chat-with-id-container .chat-shell {
     width: 100%;
-    max-width: calc(100vw - 32px);
   }
 
   .chat-with-id-container .analysis-sidebar {
     position: absolute;
     top: 8px;
-    right: 0;
+    right: 16px;
+    left: auto;
     z-index: 10;
     width: min(350px, calc(100vw - 48px));
     min-width: 0;

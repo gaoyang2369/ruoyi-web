@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ToolCallInfo } from '@/pages/chat/layouts/chatWithId/types';
 import ToolCallGroup from './ToolCallGroup.vue';
+import { getToolDisplayName } from './toolDisplay';
 
 const props = defineProps<{
   tools: ToolCallInfo[];
@@ -12,19 +13,7 @@ const emit = defineEmits<{
   collapse: [];
 }>();
 
-function friendlyToolName(name?: string) {
-  const names: Record<string, string> = {
-    query_device_status: '设备状态查询',
-    lookup_fault_code: '故障码查询',
-    query_telemetry_statistics: '遥测统计查询',
-    query_telemetry_series: '遥测趋势查询',
-    diagnose_device: '设备故障诊断',
-    generate_operation_report: '运行报告生成',
-  };
-  return names[name || ''] || name || '分析工具';
-}
-
-const latestToolName = computed(() => friendlyToolName(props.tools[props.tools.length - 1]?.name));
+const latestToolName = computed(() => getToolDisplayName(props.tools[props.tools.length - 1]?.name));
 const requestState = computed(() => props.status === 'analyzing' ? 'active' : 'done');
 const queryState = computed(() => {
   if (!props.tools.length)
