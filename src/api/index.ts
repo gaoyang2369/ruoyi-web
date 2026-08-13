@@ -3,4 +3,5 @@ export * from './auth';
 export * from './chat';
 export * from './media';
 export * from './model';
+export * from './report';
 export * from './session';

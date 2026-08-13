@@ -35,6 +35,15 @@ export const layoutRouter: RouteRecordRaw[] = [
           icon: 'Grid',
         },
       },
+      {
+        path: '/reports/:reportCode',
+        name: 'operationReport',
+        component: () => import('@/pages/report/index.vue'),
+        meta: {
+          title: '运行报告',
+          isDefaultChat: false,
+        },
+      },
     ],
   },
 ];

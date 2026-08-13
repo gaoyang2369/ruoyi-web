@@ -50,7 +50,7 @@ export interface ReSumeRunner {
 /**
  * SSE 事件类型
  */
-export type SseEventType = 'content' | 'reasoning' | 'done' | 'error' | 'message';
+export type SseEventType = 'content' | 'reasoning' | 'done' | 'error' | 'message' | 'report';
 
 /**
  * SSE 事件数据
@@ -76,6 +76,7 @@ export interface SseEventData {
    * 是否完成
    */
   done?: boolean;
+  data?: Record<string, unknown>;
 }
 
 /**

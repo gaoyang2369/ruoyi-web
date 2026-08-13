@@ -5,6 +5,7 @@ import type { BubbleProps } from 'vue-element-plus-x/types/Bubble';
 import type { BubbleListInstance } from 'vue-element-plus-x/types/BubbleList';
 import type { ChatSyncEvent, ToolCallInfo, VoiceStatus, WfNodeEvent } from './types';
 import type { SendDTO, WfNodeInput, WfNodeInputDef } from '@/api/chat/types';
+import type { ReportAttachment } from '@/api/report';
 import type { BrowserVoice } from '@/composables/useBrowserVoice';
 import { useHookFetch } from 'hook-fetch/vue';
 import { nextTick } from 'vue';
@@ -12,6 +13,7 @@ import { useRoute } from 'vue-router';
 import { send } from '@/api';
 import assistantAvatar from '@/assets/images/logo.png';
 import ChatSender from '@/components/ChatSender/index.vue';
+import ReportAttachmentCard from '@/components/ReportAttachmentCard/index.vue';
 import { useAgentStore } from '@/stores/modules/agent';
 import { useChatStore } from '@/stores/modules/chat';
 import { useDesignStore } from '@/stores/modules/design';
@@ -50,6 +52,7 @@ type MessageItem = BubbleProps & {
   analysisStatus?: 'analyzing' | 'querying' | 'generating' | 'completed' | 'failed' | 'cancelled';
   analysisStartedAt?: number;
   hasReceivedContent?: boolean;
+  reportAttachment?: ReportAttachment;
 };
 
 const route = useRoute();
@@ -801,6 +804,11 @@ function handleDataChunk(chunk: AnyObject | string): boolean {
         return false;
       }
 
+      if ((eventType === 'report' || dataObj?.event === 'report') && dataObj) {
+        handleReportEvent(dataObj);
+        return false;
+      }
+
       if (dataObj && eventType === 'content') {
         const content = dataObj.content || '';
         if (content) {
@@ -809,6 +817,10 @@ function handleDataChunk(chunk: AnyObject | string): boolean {
       }
     }
     else if (typeof chunk === 'object' && chunk !== null) {
+      if (chunk?.event === 'report') {
+        handleReportEvent(chunk);
+        return false;
+      }
       const parsedChunk = chunk?.choices?.[0]?.delta?.content;
       if (parsedChunk) {
         handleContentChunk(parsedChunk);
@@ -825,6 +837,30 @@ function handleDataChunk(chunk: AnyObject | string): boolean {
   }
 
   return false;
+}
+
+function handleReportEvent(dataObj: AnyObject) {
+  let report = dataObj.data || dataObj.report || dataObj.content;
+  if (typeof report === 'string') {
+    try {
+      report = JSON.parse(report);
+    }
+    catch {
+      report = null;
+    }
+  }
+  if (!report?.reportCode) {
+    console.warn('[SSE] 报告事件缺少 reportCode:', dataObj);
+    return;
+  }
+  const message = bubbleItems.value[bubbleItems.value.length - 1];
+  if (!message || message.role !== 'system') {
+    return;
+  }
+  message.reportAttachment = report as ReportAttachment;
+  message.loading = false;
+  bubbleItems.value = [...bubbleItems.value];
+  bubbleListRef.value?.scrollToBottom();
 }
 
 /**
@@ -1200,14 +1236,20 @@ function sendMessageByKey(key: number) {
                 </el-button>
               </div>
             </div>
-            <XMarkdown
-              v-else-if="item.content && item.role === 'system'"
-              :markdown="item.content"
-              :code-x-render="codeXRender"
-              class="markdown-body"
-              :themes="{ light: 'github-light', dark: 'github-dark' }"
-              :default-theme-mode="markdownThemeMode"
-            />
+            <div v-else-if="item.role === 'system'" class="assistant-message-content">
+              <XMarkdown
+                v-if="item.content"
+                :markdown="item.content"
+                :code-x-render="codeXRender"
+                class="markdown-body"
+                :themes="{ light: 'github-light', dark: 'github-dark' }"
+                :default-theme-mode="markdownThemeMode"
+              />
+              <ReportAttachmentCard
+                v-if="item.reportAttachment"
+                :report="item.reportAttachment"
+              />
+            </div>
             <div v-if="item.content && item.role === 'user'" class="userContent">
               <div class="user-bubble" :class="{ editing: editingMessageKeys.includes(item.key) }">
                 <template v-if="!editingMessageKeys.includes(item.key)">
