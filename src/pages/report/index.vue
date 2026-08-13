@@ -300,6 +300,9 @@ function handleAfterPrint() {
           <div class="section-heading report-print-block">
             <span>04</span><h2>运行趋势</h2>
           </div>
+          <p v-if="report.events.length" class="trend-event-hint report-print-block">
+            淡色区域为异常窗口，橙色虚线为触发边界，绿色虚线为恢复边界。
+          </p>
           <div class="chart-grid">
             <ReportTrendChart
               v-for="panel in trendPanels" ref="trendChartRefs" :key="panel.title" :title="panel.title"
@@ -609,6 +612,7 @@ dd { margin: 5px 0 0; color: #233c55; font-size: 20px; font-weight: 700; }
 }
 .operating-findings { margin-top: 18px; padding-top: 14px; border-top: 1px solid #e7ecf2; }
 .operating-findings h3 { margin: 0; }
+.trend-event-hint { margin: -8px 0 14px; color: #718095; font-size: 12px; }
 
 .electrical-chart {
   padding: 0;

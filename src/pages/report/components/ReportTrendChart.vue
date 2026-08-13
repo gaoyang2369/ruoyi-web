@@ -22,6 +22,8 @@ const selectedTrends = computed(() => props.metricNames
   .filter((trend): trend is ReportTrend => Boolean(trend?.points?.length)));
 
 function buildOption(): echarts.EChartsOption {
+  const windowStart = toMilliseconds(props.windowStart);
+  const windowEnd = toMilliseconds(props.windowEnd);
   const eventMarks = props.events
     .flatMap((event) => {
       const marks: Array<Record<string, unknown>> = [];
@@ -31,7 +33,7 @@ function buildOption(): echarts.EChartsOption {
           name: `${event.code} 触发`,
           xAxis: start,
           lineStyle: { color: event.type === 'FAULT' ? '#c74b4b' : '#e6a23c', type: 'dashed' },
-          label: { show: true, formatter: '{b}', color: '#667085', fontSize: 10 },
+          label: { show: false },
         });
       }
       const recovered = toMilliseconds(event.recoveredAt);
@@ -40,18 +42,32 @@ function buildOption(): echarts.EChartsOption {
           name: `${event.code} 恢复`,
           xAxis: recovered,
           lineStyle: { color: '#39a275', type: 'dashed' },
-          label: { show: true, formatter: '{b}', color: '#667085', fontSize: 10 },
+          label: { show: false },
         });
       }
       return marks;
     });
-  const windowStart = toMilliseconds(props.windowStart);
-  const windowEnd = toMilliseconds(props.windowEnd);
+  const eventWindows: NonNullable<echarts.MarkAreaComponentOption['data']> = [];
+  for (const event of props.events) {
+    const start = toMilliseconds(event.firstSeenAt);
+    const end = toMilliseconds(event.recoveredAt) ?? windowEnd;
+    if (start === null || end === null || end <= start) {
+      continue;
+    }
+    eventWindows.push([
+      {
+        name: '异常窗口',
+        xAxis: start,
+        itemStyle: { color: event.type === 'FAULT' ? 'rgb(199 75 75 / 12%)' : 'rgb(230 162 60 / 12%)' },
+      },
+      { xAxis: end },
+    ]);
+  }
 
   return {
     animation: false,
     color: ['#1769aa', '#e07a3f', '#6f52b5'],
-    grid: { left: 62, right: 26, top: 54, bottom: 50, containLabel: false },
+    grid: { left: 62, right: 26, top: 48, bottom: 50, containLabel: false },
     legend: { top: 8 },
     tooltip: { trigger: 'axis' },
     xAxis: {
@@ -77,6 +93,9 @@ function buildOption(): echarts.EChartsOption {
       lineStyle: { width: 2 },
       markLine: index === 0 && eventMarks.length
         ? { silent: true, symbol: ['none', 'none'], data: eventMarks }
+        : undefined,
+      markArea: index === 0 && eventWindows.length
+        ? { silent: true, label: { show: false }, data: eventWindows }
         : undefined,
     })),
   };
