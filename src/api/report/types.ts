@@ -116,8 +116,20 @@ export interface OperationReportResult {
     content: string | null;
     userVisible: boolean;
   }>;
-  narrative: string | null;
+  narrative: ReportNarrative | null;
   limitations: string[];
+}
+
+export interface ReportNarrative {
+  executiveSummary: string | null;
+  operatingFindings: string | null;
+  anomalyAnalysis: string | null;
+  recommendations: Array<{
+    priority: 'P1' | 'P2' | 'P3';
+    action: string;
+    basis: string;
+  }>;
+  riskNotice: string | null;
 }
 
 export interface OperationReportResponse {

@@ -34,6 +34,14 @@ const statusLabels: Record<ReportHealthStatus, string> = {
 const electricalMetrics = computed(() => ['currentActual', 'actualPower', 'dcVoltage']
   .filter(name => report.value?.trends.some(trend => trend.metricName === name && trend.points.length)));
 
+const kpiMetrics = computed(() => {
+  const preferred = ['actualPower', 'currentActual', 'dcVoltage', 'motorLoadRate', 'motorTemp'];
+  return preferred
+    .map(name => report.value?.metrics.find(metric => metric.metricName === name))
+    .filter((metric): metric is NonNullable<typeof metric> => Boolean(metric && (metric.current ?? metric.average) !== null))
+    .slice(0, 4);
+});
+
 const selectedCompleteness = computed<CompletenessCategory | null>(() =>
   report.value?.dataCompleteness.find(item => item.categoryName === selectedCompletenessMetric.value)
   || report.value?.dataCompleteness[0]
@@ -98,7 +106,7 @@ function formatPercent(value: number | null | undefined) {
 }
 
 function unitOf(metricName: string) {
-  return report.value?.metricUnits[metricName] || '单位未配置';
+  return report.value?.metricUnits[metricName] || '—';
 }
 
 function statusClass(status: ReportHealthStatus) {
@@ -176,6 +184,10 @@ function printReport() {
             <span>01</span><h2>执行摘要</h2>
           </div>
           <p>{{ report.summary.conclusion }}</p>
+          <div v-if="report.narrative?.executiveSummary" class="model-narrative">
+            <strong>运行摘要</strong>
+            <p>{{ report.narrative.executiveSummary }}</p>
+          </div>
           <el-alert
             v-if="report.period.fallbackToLatestData"
             type="warning"
@@ -189,13 +201,25 @@ function printReport() {
             <span>02</span><h2>KPI 与数据质量</h2>
           </div>
           <div class="quality-grid">
-            <dl>
-              <div><dt>原始记录</dt><dd>{{ report.dataQuality?.rawRecordCount ?? 0 }}</dd></div>
-              <div><dt>有效记录</dt><dd>{{ report.dataQuality?.validRecordCount ?? 0 }}</dd></div>
-              <div><dt>重复记录</dt><dd>{{ report.dataQuality?.duplicateCount ?? 0 }}</dd></div>
-              <div><dt>无效时间</dt><dd>{{ report.dataQuality?.invalidTimeCount ?? 0 }}</dd></div>
-              <div><dt>采样缺口</dt><dd>{{ report.dataQuality?.gapCount ?? 0 }}</dd></div>
-            </dl>
+            <div>
+              <h3 class="quality-title">
+                数据质量
+              </h3>
+              <dl>
+                <div><dt>采样记录</dt><dd>{{ report.dataQuality?.rawRecordCount ?? 0 }}</dd></div>
+                <div><dt>有效记录</dt><dd>{{ report.dataQuality?.validRecordCount ?? 0 }}</dd></div>
+                <div><dt>重复采样</dt><dd>{{ report.dataQuality?.duplicateCount ?? 0 }}</dd></div>
+                <div><dt>无效时间记录</dt><dd>{{ report.dataQuality?.invalidTimeCount ?? 0 }}</dd></div>
+                <div><dt>采样缺口</dt><dd>{{ report.dataQuality?.gapCount ?? 0 }}</dd></div>
+              </dl>
+              <div v-if="kpiMetrics.length" class="kpi-grid">
+                <article v-for="metric in kpiMetrics" :key="metric.metricName">
+                  <span>{{ metricLabels[metric.metricName] || metric.metricName }}</span>
+                  <strong>{{ formatNumber(metric.current ?? metric.average) }}</strong>
+                  <small v-if="report.metricUnits[metric.metricName]">{{ report.metricUnits[metric.metricName] }}</small>
+                </article>
+              </div>
+            </div>
             <div v-if="selectedCompleteness" class="completeness-panel">
               <el-select v-model="selectedCompletenessMetric" class="no-print" size="small">
                 <el-option
@@ -260,13 +284,34 @@ function printReport() {
                 :events="report.events"
               />
             </article>
+            <div v-if="electricalMetrics.length" class="electrical-print-charts print-only">
+              <ReportTrendChart
+                v-for="metricName in electricalMetrics"
+                :key="`print-${metricName}`"
+                :title="`${metricLabels[metricName]}趋势`"
+                :metric-names="[metricName]"
+                :metric-labels="metricLabels"
+                :metric-units="report.metricUnits"
+                :trends="report.trends"
+                :events="report.events"
+              />
+            </div>
           </div>
           <el-empty v-if="!report.trends.length" description="本报告快照中没有可展示的真实趋势数据" />
         </section>
 
+        <section v-if="report.narrative?.operatingFindings" class="report-section report-print-block">
+          <div class="section-heading">
+            <span>04</span><h2>运行解读</h2>
+          </div>
+          <p class="narrative-copy">
+            {{ report.narrative.operatingFindings }}
+          </p>
+        </section>
+
         <section class="report-section report-print-block">
           <div class="section-heading">
-            <span>04</span><h2>异常时间线</h2>
+            <span>05</span><h2>异常时间线</h2>
           </div>
           <el-timeline v-if="timeline.length">
             <el-timeline-item
@@ -285,7 +330,7 @@ function printReport() {
 
         <section class="report-section report-print-block">
           <div class="section-heading">
-            <span>05</span><h2>指标表</h2>
+            <span>06</span><h2>指标表</h2>
           </div>
           <div class="table-wrap">
             <table>
@@ -312,7 +357,7 @@ function printReport() {
         <section class="report-section two-column report-print-block">
           <article>
             <div class="section-heading">
-              <span>06</span><h2>诊断</h2>
+              <span>07</span><h2>诊断</h2>
             </div>
             <p>诊断状态：{{ report.diagnosis.status }}</p>
             <ul v-if="report.diagnosis.decisionRationale.length">
@@ -323,16 +368,22 @@ function printReport() {
             <p v-else class="empty-copy">
               没有额外诊断判断说明。
             </p>
-            <div v-if="report.narrative" class="model-narrative">
-              <strong>模型归纳（受结构化事实约束）</strong>
-              <p>{{ report.narrative }}</p>
+            <div v-if="report.narrative?.anomalyAnalysis" class="model-narrative">
+              <strong>异常分析</strong>
+              <p>{{ report.narrative.anomalyAnalysis }}</p>
             </div>
           </article>
           <article>
             <div class="section-heading">
-              <span>07</span><h2>建议</h2>
+              <span>08</span><h2>建议</h2>
             </div>
-            <ol v-if="report.recommendations.length">
+            <ol v-if="report.narrative?.recommendations.length">
+              <li v-for="item in report.narrative.recommendations" :key="`${item.priority}-${item.action}`">
+                <strong>{{ item.priority }}</strong> · {{ item.action }}
+                <small class="recommendation-basis">依据：{{ item.basis }}</small>
+              </li>
+            </ol>
+            <ol v-else-if="report.recommendations.length">
               <li v-for="item in report.recommendations" :key="item.content">
                 {{ item.content }}
               </li>
@@ -345,7 +396,7 @@ function printReport() {
 
         <section class="report-section report-print-block">
           <div class="section-heading">
-            <span>08</span><h2>证据</h2>
+            <span>09</span><h2>证据</h2>
           </div>
           <ul v-if="visibleEvidence.length" class="evidence-list">
             <li v-for="(item, index) in visibleEvidence" :key="item.evidenceCode || item.evidenceId || index">
@@ -364,8 +415,11 @@ function printReport() {
 
         <section class="report-section report-print-block">
           <div class="section-heading">
-            <span>09</span><h2>局限性</h2>
+            <span>10</span><h2>结论边界</h2>
           </div>
+          <p v-if="report.narrative?.riskNotice" class="narrative-copy">
+            {{ report.narrative.riskNotice }}
+          </p>
           <ul v-if="report.limitations.length">
             <li v-for="item in report.limitations" :key="item">
               {{ item }}
@@ -527,6 +581,12 @@ h2 {
   gap: 12px;
 }
 
+.quality-title { margin: 0 0 10px; color: #526579; font-size: 14px; }
+.kpi-grid { display: grid; margin-top: 14px; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.kpi-grid article { padding: 11px; background: #eef6fb; border-radius: 9px; }
+.kpi-grid span, .kpi-grid small { display: block; color: #718095; font-size: 12px; }
+.kpi-grid strong { display: block; margin: 5px 0 2px; color: #233c55; font-size: 18px; }
+
 .quality-grid dl > div {
   padding: 15px;
   background: #f7f9fc;
@@ -573,6 +633,8 @@ ul, ol { padding-left: 22px; line-height: 1.8; }
 
 .model-narrative strong { color: #36546d; font-size: 13px; }
 .model-narrative p { margin: 8px 0 0; line-height: 1.75; white-space: pre-wrap; }
+.narrative-copy { margin: 0; line-height: 1.8; white-space: pre-wrap; }
+.recommendation-basis { display: block; margin-top: 4px; color: #718095; }
 
 .evidence-list { padding: 0; list-style: none; }
 .evidence-list li { padding: 13px 0; border-bottom: 1px solid #edf0f4; }
@@ -587,6 +649,7 @@ ul, ol { padding-left: 22px; line-height: 1.8; }
   .status-grid, .chart-grid { grid-template-columns: 1fr; }
   .status-grid { grid-template-columns: repeat(2, 1fr); }
   .quality-grid, .two-column { grid-template-columns: 1fr; }
+  .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 </style>
 
@@ -617,8 +680,12 @@ ul, ol { padding-left: 22px; line-height: 1.8; }
     page-break-inside: avoid;
   }
   .report-section { break-before: auto; }
-  .chart-grid { grid-template-columns: 1fr !important; }
-  .trend-chart-canvas { height: 270px !important; }
+  .chart-grid, .electrical-print-charts { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 10px !important; }
+  .electrical-chart { display: none !important; }
+  .electrical-print-charts { display: grid !important; grid-column: 1 / -1; }
+  .trend-chart { break-inside: avoid; page-break-inside: avoid; }
+  .trend-chart-canvas { height: 215px !important; }
+  .report-section { padding: 16px 18px !important; margin-top: 10px !important; }
   .print-only { display: block !important; }
 }
 </style>
