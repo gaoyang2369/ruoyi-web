@@ -323,6 +323,10 @@ function printReport() {
             <p v-else class="empty-copy">
               没有额外诊断判断说明。
             </p>
+            <div v-if="report.narrative" class="model-narrative">
+              <strong>模型归纳（受结构化事实约束）</strong>
+              <p>{{ report.narrative }}</p>
+            </div>
           </article>
           <article>
             <div class="section-heading">
@@ -558,6 +562,17 @@ th { color: #526579; font-weight: 600; background: #f5f8fb; }
 ul, ol { padding-left: 22px; line-height: 1.8; }
 .empty-copy, .source-digest { color: #7b8999; }
 .source-digest { margin-top: 16px; font-size: 12px; overflow-wrap: anywhere; }
+
+.model-narrative {
+  padding: 14px 16px;
+  margin-top: 16px;
+  background: #f7f9fc;
+  border-left: 3px solid #79a9c8;
+  border-radius: 8px;
+}
+
+.model-narrative strong { color: #36546d; font-size: 13px; }
+.model-narrative p { margin: 8px 0 0; line-height: 1.75; white-space: pre-wrap; }
 
 .evidence-list { padding: 0; list-style: none; }
 .evidence-list li { padding: 13px 0; border-bottom: 1px solid #edf0f4; }

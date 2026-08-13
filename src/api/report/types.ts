@@ -116,6 +116,7 @@ export interface OperationReportResult {
     content: string | null;
     userVisible: boolean;
   }>;
+  narrative: string | null;
   limitations: string[];
 }
 

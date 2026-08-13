@@ -1,4 +1,5 @@
 import type { ChatMessageVo, WfNodeInput, WfNodeInputDef } from '@/api/chat/types';
+import type { ReportAttachment } from '@/api/report';
 import { defineStore } from 'pinia';
 import { getChatList } from '@/api';
 import { useUserStore } from './user';
@@ -77,6 +78,7 @@ export const useChatStore = defineStore('chat', () => {
         typing: false,
         content: visibleContent,
         noStyle: !isUser,
+        reportAttachment: isUser ? undefined : parseReportAttachment(item.remark),
       };
 
       return result;
@@ -111,6 +113,22 @@ export const useChatStore = defineStore('chat', () => {
     }
     const openTag = content.indexOf('<think>');
     return openTag >= 0 ? content.substring(0, openTag) : content;
+  }
+
+  /** 报告附件与助手消息一起持久化，刷新或返回会话后仍可恢复卡片。 */
+  function parseReportAttachment(remark?: string): ReportAttachment | undefined {
+    if (!remark) {
+      return undefined;
+    }
+    try {
+      const value = JSON.parse(remark) as Partial<ReportAttachment>;
+      return typeof value.reportCode === 'string' && value.reportCode.length > 0
+        ? value as ReportAttachment
+        : undefined;
+    }
+    catch {
+      return undefined;
+    }
   }
 
   return {
