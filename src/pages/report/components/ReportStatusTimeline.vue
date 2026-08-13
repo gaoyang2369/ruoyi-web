@@ -9,7 +9,7 @@ interface TimelineSegment {
 
 interface TimelineMarker {
   time: number;
-  text: string;
+  label: string | null;
   type: 'FAULT' | 'ALARM' | 'RECOVERED';
 }
 
@@ -75,54 +75,69 @@ const markers = computed<TimelineMarker[]>(() => {
     return [];
   }
   const eventMarkers = props.events.flatMap(event => [
-    markerOf(event.firstSeenAt, `${event.code} 触发`, event.type),
-    markerOf(event.recoveredAt, `${event.code} 恢复`, 'RECOVERED'),
+    markerOf(event.firstSeenAt, eventLabel(event), event.type),
+    markerOf(event.recoveredAt, null, 'RECOVERED'),
   ]);
   return eventMarkers
     .filter((marker): marker is TimelineMarker => Boolean(marker && marker.time >= range.start && marker.time <= range.end))
     .sort((left, right) => left.time - right.time);
 });
 
-const phaseSummary = computed(() => {
-  return segments.value.map(segment => statusLabels[segment.status]);
+const ticks = computed(() => {
+  const range = windowRange.value;
+  if (!range) {
+    return [];
+  }
+  return Array.from({ length: 5 }, (_, index) => ({
+    time: range.start + ((range.end - range.start) * index) / 4,
+    position: index * 25,
+  }));
 });
+
+const phaseSummary = computed(() => segments.value.map(segment => statusLabels[segment.status]));
 
 const summary = computed(() => {
   if (!props.events.length && phaseSummary.value.length === 1 && phaseSummary.value[0] === '正常') {
     return '本周期设备持续处于正常状态，未记录故障或报警事件。';
   }
 
-  const stageText = phaseSummary.value.length
-    ? `本周期设备经历“${phaseSummary.value.join(' → ')}”${phaseSummary.value.length > 1 ? `${phaseSummary.value.length} 个阶段` : '阶段'}。`
-    : '本周期未获得可用的状态变化记录。';
+  const normalDuration = segments.value.filter(segment => segment.status === 'NORMAL')
+    .reduce((total, segment) => total + segment.end - segment.start, 0);
+  const duration = windowRange.value ? windowRange.value.end - windowRange.value.start : 0;
+  const statusText = normalDuration >= duration / 2 ? '本周期设备大部分时间处于正常状态。' : '';
   if (!props.events.length) {
-    return `${stageText}报告结束时设备状态${statusLabels[props.currentStatus]}。`;
+    return `${statusText}报告结束时设备状态${statusLabels[props.currentStatus]}。`;
   }
 
-  if (props.events.length === 1) {
-    const [event] = props.events;
-    const start = toMilliseconds(event.firstSeenAt);
-    const end = toMilliseconds(event.recoveredAt);
-    const eventText = start === null
-      ? `${event.code} 已记录为${event.type === 'FAULT' ? '故障' : '报警'}事件。`
-      : end === null
-        ? event.active
-          ? `${event.code} 于 ${formatClock(start)} 出现，报告结束时仍活动。`
-          : `${event.code} 于 ${formatClock(start)} 出现，未记录恢复时间。`
-        : `${event.code} 于 ${formatClock(start)} 出现，持续约 ${formatDuration(end - start)}，并于 ${formatClock(end)} 恢复。`;
-    return `${stageText}${eventText}报告结束时设备状态${statusLabels[props.currentStatus]}。`;
+  const byCode = new Map<string, ReportEvent[]>();
+  for (const event of props.events) {
+    byCode.set(event.code, [...(byCode.get(event.code) || []), event]);
   }
-
-  const recovered = props.events.filter(event => Boolean(event.recoveredAt)).length;
-  const active = props.events.filter(event => event.active).length;
-  const recoveryTimeUnknown = props.events.length - recovered - active;
-  const eventText = recoveryTimeUnknown
-    ? `周期内共出现 ${props.events.length} 次异常事件，其中 ${recovered} 次已恢复，${active} 次在窗口结束时仍活动，${recoveryTimeUnknown} 次未记录恢复时间。`
-    : active
-      ? `周期内共出现 ${props.events.length} 次异常事件，其中 ${recovered} 次已恢复，${active} 次在窗口结束时仍活动。`
-      : `周期内共出现 ${props.events.length} 次异常事件，均已恢复。`;
-  return `${stageText}${eventText}报告结束时设备状态${statusLabels[props.currentStatus]}。`;
+  const eventText = byCode.size === 1
+    ? summaryForCode([...byCode.entries()][0])
+    : summaryForMultipleCodes(props.events);
+  return `${statusText}${eventText}报告结束时设备状态${statusLabels[props.currentStatus]}。`;
 });
+
+function summaryForCode([code, events]: [string, ReportEvent[]]) {
+  if (events.length === 1) {
+    return `${code} ${eventDescription(events[0])}；`;
+  }
+  const descriptions = events.map(event => eventInterval(event)).join('、');
+  const allRecovered = events.every(event => Boolean(event.recoveredAt));
+  return `${code} 共出现 ${events.length} 次：${descriptions}${allRecovered ? '，均已恢复' : ''}；`;
+}
+
+function summaryForMultipleCodes(events: ReportEvent[]) {
+  const recovered = events.filter(event => Boolean(event.recoveredAt)).length;
+  const active = events.filter(event => event.active).length;
+  const recoveryTimeUnknown = events.length - recovered - active;
+  return recoveryTimeUnknown
+    ? `周期内共出现 ${events.length} 次异常事件，其中 ${recovered} 次已恢复，${active} 次在窗口结束时仍活动，${recoveryTimeUnknown} 次未记录恢复时间。`
+    : active
+      ? `周期内共出现 ${events.length} 次异常事件，其中 ${recovered} 次已恢复，${active} 次在窗口结束时仍活动。`
+      : `周期内共出现 ${events.length} 次异常事件，均已恢复。`;
+}
 
 function segmentStyle(segment: TimelineSegment) {
   const range = windowRange.value;
@@ -145,6 +160,20 @@ function markerStyle(marker: TimelineMarker) {
   return { left: `${Math.max(0, Math.min(100, position))}%` };
 }
 
+function markerClass(marker: TimelineMarker) {
+  const range = windowRange.value;
+  if (!range) {
+    return '';
+  }
+  const ratio = (marker.time - range.start) / (range.end - range.start);
+  return ratio < 0.12 ? 'marker-start' : ratio > 0.88 ? 'marker-end' : 'marker-center';
+}
+
+function showSegmentLabel(segment: TimelineSegment) {
+  const range = windowRange.value;
+  return Boolean(range && (segment.end - segment.start) / (range.end - range.start) >= 0.08);
+}
+
 function statusOf(event: StatusTimelineEvent): ReportHealthStatus {
   if (event.faultCode) {
     return 'FAULT';
@@ -165,9 +194,9 @@ function statusOf(event: StatusTimelineEvent): ReportHealthStatus {
   return 'UNKNOWN';
 }
 
-function markerOf(timeValue: string | null, text: string, type: TimelineMarker['type']) {
+function markerOf(timeValue: string | null, label: string | null, type: TimelineMarker['type']) {
   const time = toMilliseconds(timeValue);
-  return time === null ? null : { time, text, type };
+  return time === null ? null : { time, label, type };
 }
 
 function toMilliseconds(value: string | null | undefined) {
@@ -192,29 +221,59 @@ function formatDuration(milliseconds: number) {
   const remainingMinutes = minutes % 60;
   return remainingMinutes ? `${hours} 小时 ${remainingMinutes} 分钟` : `${hours} 小时`;
 }
+
+function eventLabel(event: ReportEvent) {
+  const interval = eventInterval(event);
+  return interval ? `${event.code} ${interval}` : event.code;
+}
+
+function eventDescription(event: ReportEvent) {
+  const start = toMilliseconds(event.firstSeenAt);
+  const end = toMilliseconds(event.recoveredAt);
+  if (start === null) {
+    return '已记录为异常事件';
+  }
+  if (end !== null) {
+    return `于 ${formatClock(start)} 出现，持续约 ${formatDuration(end - start)}，于 ${formatClock(end)} 恢复`;
+  }
+  return event.active
+    ? `于 ${formatClock(start)} 出现，报告结束时仍处于活动状态`
+    : `于 ${formatClock(start)} 出现，未记录恢复时间`;
+}
+
+function eventInterval(event: ReportEvent) {
+  const start = toMilliseconds(event.firstSeenAt);
+  if (start === null) {
+    return '';
+  }
+  const end = toMilliseconds(event.recoveredAt);
+  return end === null ? `${formatClock(start)} 起` : `${formatClock(start)}–${formatClock(end)}`;
+}
 </script>
 
 <template>
   <div class="status-timeline">
-    <div class="timeline-ruler">
-      <span>{{ formatClock(windowRange?.start || 0) }}</span>
-      <span>{{ formatClock(windowRange?.end || 0) }}</span>
+    <div class="timeline-ruler" aria-label="分析周期时间刻度">
+      <span v-for="tick in ticks" :key="tick.position" :style="{ left: `${tick.position}%` }">
+        <i />{{ formatClock(tick.time) }}
+      </span>
     </div>
     <div class="timeline-markers" aria-label="异常事件标记">
       <span
-        v-for="marker in markers" :key="`${marker.time}-${marker.text}`" class="timeline-marker"
-        :class="`marker-${marker.type.toLowerCase()}`" :style="markerStyle(marker)" :title="`${formatClock(marker.time)} ${marker.text}`"
+        v-for="marker in markers" :key="`${marker.time}-${marker.type}-${marker.label || ''}`" class="timeline-marker"
+        :class="[`marker-${marker.type.toLowerCase()}`, markerClass(marker)]" :style="markerStyle(marker)"
+        :title="marker.label || `${formatClock(marker.time)} 恢复`"
       >
         <i />
-        <b>{{ marker.text }}</b>
+        <b v-if="marker.label">{{ marker.label }}</b>
       </span>
     </div>
     <div class="timeline-track" aria-label="设备运行状态时间线">
       <span
         v-for="segment in segments" :key="`${segment.start}-${segment.end}-${segment.status}`" class="timeline-segment"
-        :class="`segment-${segment.status.toLowerCase()}`" :style="segmentStyle(segment)"
+        :class="`segment-${segment.status.toLowerCase()}`" :style="segmentStyle(segment)" :title="statusLabels[segment.status]"
       >
-        <span>{{ statusLabels[segment.status] }}</span>
+        <span v-if="showSegmentLabel(segment)">{{ statusLabels[segment.status] }}</span>
       </span>
     </div>
     <p class="timeline-summary">
@@ -225,48 +284,59 @@ function formatDuration(milliseconds: number) {
 
 <style scoped lang="scss">
 .status-timeline {
-  padding-top: 18px;
+  padding-top: 6px;
 }
 
 .timeline-ruler {
-  display: flex;
-  justify-content: space-between;
+  position: relative;
+  height: 25px;
   color: #718095;
   font-size: 12px;
 }
 
+.timeline-ruler span {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  transform: translateX(-50%);
+}
+
+.timeline-ruler span:first-child { transform: none; }
+.timeline-ruler span:last-child { transform: translateX(-100%); }
+.timeline-ruler i { width: 1px; height: 5px; background: #aab8c6; }
+
 .timeline-markers {
   position: relative;
-  height: 42px;
-  margin: 0 4px;
+  height: 27px;
+  margin: 0 2px;
 }
 
 .timeline-marker {
   position: absolute;
-  bottom: -9px;
+  bottom: -2px;
   display: flex;
   min-width: 1px;
-  height: 30px;
-  align-items: flex-end;
-  border-left: 1px dashed currentcolor;
+  height: 12px;
+  align-items: center;
   color: #b87412;
   transform: translateX(-50%);
 }
 
 .timeline-marker i {
   position: absolute;
-  bottom: -4px;
-  width: 7px;
-  height: 7px;
-  border: 2px solid #fff;
+  bottom: -3px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: currentcolor;
+  box-shadow: 0 0 0 2px #fff;
 }
 
 .timeline-marker b {
   position: absolute;
-  bottom: 15px;
-  max-width: 94px;
+  bottom: 10px;
+  max-width: 130px;
   overflow: hidden;
   color: currentcolor;
   font-size: 11px;
@@ -275,15 +345,19 @@ function formatDuration(milliseconds: number) {
   white-space: nowrap;
 }
 
+.marker-start b { left: 0; transform: none; }
+.marker-center b { left: 50%; transform: translateX(-50%); }
+.marker-end b { right: 0; transform: none; }
+
 .marker-fault { color: #c74b4b; }
 .marker-recovered { color: #27805f; }
 
 .timeline-track {
   position: relative;
-  height: 38px;
+  height: 28px;
   overflow: hidden;
   border: 1px solid #dce5ee;
-  border-radius: 8px;
+  border-radius: 7px;
   background: #f7f9fc;
 }
 
@@ -308,10 +382,10 @@ function formatDuration(milliseconds: number) {
   white-space: nowrap;
 }
 
-.segment-normal { background: #27805f; }
-.segment-attention { background: #d49427; }
-.segment-fault { background: #c74b4b; }
-.segment-unknown { background: #758195; }
+.segment-normal { color: #277c5e; background: #e5f3eb; }
+.segment-attention { color: #a56308; background: #fce9bf; }
+.segment-fault { color: #b33c3c; background: #f8dede; }
+.segment-unknown { color: #627080; background: #e3e7eb; }
 
 .timeline-summary {
   margin: 16px 0 0;
@@ -320,8 +394,8 @@ function formatDuration(milliseconds: number) {
 }
 
 @media print {
-  .status-timeline { padding-top: 10px; }
-  .timeline-markers { height: 36px; }
+  .status-timeline { padding-top: 4px; }
+  .timeline-markers { height: 24px; }
   .timeline-marker b { font-size: 10px; }
 }
 </style>
