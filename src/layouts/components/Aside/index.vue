@@ -4,7 +4,7 @@ import type { ConversationItem } from 'vue-element-plus-x/types/Conversations';
 import type { ChatSessionVo } from '@/api/session/types';
 import { useRoute, useRouter } from 'vue-router';
 import { get_session } from '@/api';
-import logo from '@/assets/images/image.png';
+import logo from '@/assets/images/logo.png';
 import Collapse from '@/layouts/components/Header/components/Collapse.vue';
 import { useDesignStore } from '@/stores';
 import { useSessionStore } from '@/stores/modules/session';
@@ -310,6 +310,7 @@ function handleMenuCommand(command: string, item: ConversationItem<ChatSessionVo
           justify-content: center;
           width: 100%;
           height: 100%;
+          object-fit: cover;
           object-position: 17% center;
         }
       }

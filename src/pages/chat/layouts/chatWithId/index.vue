@@ -1433,17 +1433,23 @@ function sendMessageByKey(key: number) {
     container-type: inline-size;
   }
 
+  // 聊天壳撑满可用宽度，让滚动条贴近窗口最右侧；
+  // 内部气泡行 / 输入框各自约束为居中的内容列，视觉内容不变
   .chat-warp {
     display: flex;
     min-width: 0;
     flex: 0 1 auto;
     flex-direction: column;
-    width: min(1180px, 100%);
+    width: 100%;
     margin: 0 auto;
     height: 100%;
 
     .tool-events-wrapper {
       flex: 0 0 auto;
+      box-sizing: border-box;
+      width: 100%;
+      max-width: 1180px;
+      margin: 0 auto;
       padding: 4px 12px 0;
     }
 
@@ -1493,8 +1499,9 @@ function sendMessageByKey(key: number) {
     .sender-wrapper {
       position: relative;
       width: 100%;
+      max-width: 1180px;
       flex: 0 0 auto;
-      margin: 34px 0 22px;
+      margin: 34px auto 22px;
     }
   }
 
@@ -1559,7 +1566,12 @@ function sendMessageByKey(key: number) {
       min-height: 0;
       padding-top: 28px;
     }
+    // 滚动容器全宽（滚动条靠右），气泡行限制为居中内容列
     .el-bubble {
+      box-sizing: border-box;
+      width: 100%;
+      max-width: 1180px;
+      margin: 0 auto;
       padding: 0 10px 28px;
     }
     .el-bubble-start .el-bubble-content {
