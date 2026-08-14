@@ -296,22 +296,21 @@ function handleMenuCommand(command: string, item: ConversationItem<ChatSessionVo
       align-items: center;
       min-height: 42px;
       margin: 10px 12px 0;
+      // logo 为五边形校徽，不加圆形/圆角外框，完整自由显现
       .logo-img {
         box-sizing: border-box;
         width: 36px;
         height: 36px;
         padding: 0;
         overflow: hidden;
-        background-color: #ffffff;
-        border-radius: 50%;
+        background-color: transparent;
         img {
           display: flex;
           align-items: center;
           justify-content: center;
           width: 100%;
           height: 100%;
-          object-fit: cover;
-          object-position: 17% center;
+          object-fit: contain;
         }
       }
       .logo-text {

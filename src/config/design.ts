@@ -1,11 +1,11 @@
 export type LayoutType = 'vertical';
 
 // 仿豆包折叠逻辑
-export type CollapseType =
-  | 'alwaysCollapsed' // 始终折叠
-  | 'followSystem' // 跟随系统视口宽度
-  | 'alwaysExpanded' // 始终打开
-  | 'narrowExpandWideCollapse'; // 系统视口 宽小则张，宽大则收
+export type CollapseType
+  = | 'alwaysCollapsed' // 始终折叠
+    | 'followSystem' // 跟随系统视口宽度
+    | 'alwaysExpanded' // 始终打开
+    | 'narrowExpandWideCollapse'; // 系统视口 宽小则张，宽大则收
 
 export interface DesignConfigState {
   // 系统主题
@@ -66,8 +66,8 @@ const design: DesignConfigState = {
   pageAnimateType: 'zoom-fade',
   // 布局模式 (纵向：vertical | ... | 自己定义)
   layout: 'vertical',
-  // 折叠类型
-  collapseType: 'followSystem',
+  // 折叠类型：默认隐藏左侧对话记录栏，悬停左缘可临时展开
+  collapseType: 'alwaysCollapsed',
   // 是否折叠菜单
   isCollapse: false,
   // 安全区是否被悬停

@@ -37,10 +37,15 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 ENV UPSTREAM_URL=http://127.0.0.1:6039
 
 # 复制 Nginx 配置并使用 envsubst 替换环境变量
+# app.locations.template 为两个 server 块共用的路由规则，入口脚本会一并 envsubst
 COPY nginx.conf /etc/nginx/templates/default.conf.template
+COPY app.locations.template /etc/nginx/templates/app.locations.template
 
-# 暴露端口
-EXPOSE 5137
+# 内网自签证书（HTTPS 用，客户端需自行安装信任）
+COPY certs /etc/nginx/certs
+
+# 暴露端口（5137 HTTP / 5443 HTTPS）
+EXPOSE 5137 5443
 
 # 启动 Nginx（docker-compose 中可通过环境变量 UPSTREAM_URL 覆盖后端地址）
 CMD ["nginx", "-g", "daemon off;"]

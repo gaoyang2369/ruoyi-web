@@ -10,6 +10,7 @@ services:
     restart: always
     ports:
       - "5137:5137"
+      - "25443:5443"
     environment:
       # 后端 API 地址 - 运行时通过 nginx 代理
       # 在完整 docker-compose 中应设置为: http://backend:6039

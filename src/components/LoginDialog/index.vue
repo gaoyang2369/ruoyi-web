@@ -198,13 +198,10 @@ function onAfterLeave() {
   min-width: 0;
 }
 
+// logo 为五边形校徽，不加圆角外框，完整自由显现
 .logo-img {
   width: 32px;
   height: 32px;
-  padding: 5px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
 }
 
 .logo-text {

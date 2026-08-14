@@ -1583,9 +1583,20 @@ function sendMessageByKey(key: number) {
       background: transparent;
       padding: 0;
     }
-    .el-bubble-avatar-size .el-avatar {
+    // 用户头像保持圆形白底
+    .el-bubble-end .el-bubble-avatar-size .el-avatar {
       border: 1px solid #dce7f7;
       background: #fff;
+    }
+    // 助手头像即五边形校徽 logo，不加圆形外框，完整自由显现
+    .el-bubble-start .el-bubble-avatar-size .el-avatar {
+      border: none;
+      border-radius: 0;
+      background: transparent;
+
+      img {
+        object-fit: contain;
+      }
     }
     .el-typewriter {
       overflow: hidden;

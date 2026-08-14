@@ -1,0 +1,50 @@
+# HTTP(5137) 与 HTTPS(5443) 两个 server 块共用的应用路由规则。
+# 该文件由 nginx 镜像入口对 templates/*.template 做 envsubst 后生成，
+# 因此 ${UPSTREAM_URL} 会在容器启动时被替换。
+
+# 前端路由 fallback（SPA history 模式：/chat/:id 等页面路由刷新/深链都回 index.html）
+location / {
+    try_files $uri $uri/ /index.html;
+}
+
+# index.html 不缓存：发版后普通刷新即可加载新入口，避免浏览器沿用旧 index 指向旧资源
+location = /index.html {
+    add_header Cache-Control "no-cache, no-store, must-revalidate";
+    add_header Pragma "no-cache";
+}
+
+# 静态资源缓存（文件名带内容哈希，可长期缓存）
+location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+    expires 30d;
+    add_header Cache-Control "public, immutable";
+}
+
+# API 代理 - 前端统一使用 /prod-api 前缀（见 .env.production），与页面路由彻底分离
+# proxy_pass 尾斜杠用于剥掉 /prod-api 前缀，后端收到的仍是裸路径
+location /prod-api/ {
+    proxy_pass ${UPSTREAM_URL}/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # SSE 必须即时转发，不能等待代理缓冲区填满或上游连接关闭
+    proxy_buffering off;
+    proxy_cache off;
+    gzip off;
+
+    # 超时设置
+    proxy_connect_timeout 60s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 3600s;
+
+    # 支持 WebSocket
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+}
+
+# 禁止访问隐藏文件
+location /\. {
+    deny all;
+}

@@ -115,6 +115,7 @@ onKeyStroke(event => event.ctrlKey && event.key.toLowerCase() === 'k', handleCtr
   min-width: 0;
 }
 
+// logo 为五边形校徽，不加圆角外框，完整自由显现
 .header-brand-mark {
   display: flex;
   flex: 0 0 auto;
@@ -123,15 +124,12 @@ onKeyStroke(event => event.ctrlKey && event.key.toLowerCase() === 'k', handleCtr
   width: 38px;
   height: 38px;
   overflow: hidden;
-  background: #fff;
-  border: 1px solid #e1e9f7;
-  border-radius: 10px;
+  background: transparent;
 
   img {
     width: 100%;
     height: 100%;
-    object-fit: cover;
-    object-position: 17% center;
+    object-fit: contain;
   }
 }
 
