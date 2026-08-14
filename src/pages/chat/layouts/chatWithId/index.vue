@@ -1428,6 +1428,9 @@ function sendMessageByKey(key: number) {
     display: flex;
     width: 100%;
     height: calc(100vh - 60px);
+
+    // 以聊天区实际宽度作为容器查询基准，自动扣除左侧会话栏占用，适配不同分辨率与缩放
+    container-type: inline-size;
   }
 
   .chat-warp {
@@ -1435,7 +1438,7 @@ function sendMessageByKey(key: number) {
     min-width: 0;
     flex: 0 1 auto;
     flex-direction: column;
-    width: min(1180px, calc(100vw - 64px));
+    width: min(1180px, 100%);
     margin: 0 auto;
     height: 100%;
 
@@ -1495,21 +1498,40 @@ function sendMessageByKey(key: number) {
     }
   }
 
+  // 默认（窄容器 / 不支持容器查询的旧浏览器）：悬浮抽屉，避免挤压对话列
   .analysis-sidebar {
     position: absolute;
-    top: 10px;
-    left: calc(50% + 608px);
-    width: 350px;
-    min-width: 350px;
-    height: calc(100% - 22px);
+    top: 8px;
+    right: 8px;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    width: min(350px, calc(100% - 24px));
+    height: calc(100% - 16px);
     margin: 0;
-    transition: width .25s ease, min-width .25s ease;
+    transition: width .25s ease;
 
     &.is-collapsed {
-      display: flex;
-      align-items: center;
+      right: 0;
       width: 42px;
-      min-width: 42px;
+    }
+  }
+
+  // 聊天区足够宽时改为流式布局：面板占据真实空间而非覆盖对话，
+  // 对话列在剩余宽度内自动居中，任何屏宽 / 左侧栏状态下都不会互相遮挡
+  @container (min-width: 960px) {
+    .analysis-sidebar {
+      position: static;
+      z-index: auto;
+      flex: 0 0 auto;
+      width: 350px;
+      height: auto;
+      margin: 10px 0 12px 16px;
+
+      &.is-collapsed {
+        width: 42px;
+      }
     }
   }
 
@@ -1573,30 +1595,6 @@ function sendMessageByKey(key: number) {
       padding: 8px 4px;
       width: 100%;
       overflow: visible;
-    }
-  }
-}
-
-@media (max-width: 1920px) {
-  .chat-with-id-container .chat-shell {
-    width: 100%;
-  }
-
-  .chat-with-id-container .analysis-sidebar {
-    position: absolute;
-    top: 8px;
-    right: 16px;
-    left: auto;
-    z-index: 10;
-    width: min(350px, calc(100vw - 48px));
-    min-width: 0;
-    height: calc(100% - 20px);
-    margin: 0;
-
-    &.is-collapsed {
-      right: -2px;
-      width: 42px;
-      min-width: 42px;
     }
   }
 }
